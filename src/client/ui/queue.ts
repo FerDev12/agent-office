@@ -7,6 +7,7 @@ import { confirmDialog } from './prompt';
 import { providerPicker, providerLabel, providerUsageState, providerWaitingLabel, resolvedProvider, modelBadge } from './provider';
 import { officeFull } from '../../shared/machine';
 import { dictateField } from './dictate';
+import { ghRef, sameGh } from '../../shared/floors';
 
 export interface QueueActions {
   openTerminal(workerId: string): void;
@@ -15,8 +16,9 @@ export interface QueueActions {
 /** The queue task's name, linked to its GitHub issue when it has one. */
 function taskTitle(t: QueueTask): HTMLElement {
   if (t.issue === undefined) return h('div.queue-title', { title: t.prompt }, t.title);
-  const issue = store.issues.items.find((i) => i.number === t.issue);
-  const text = t.title.startsWith(`#${t.issue}`) ? t.title : `#${t.issue} ${t.title}`;
+  const issue = store.issues.items.find((i) => sameGh(i, t.issue!, t.repo));
+  const ref = ghRef(t.issue, t.repo);
+  const text = t.title.startsWith(ref) ? t.title : `${ref} ${t.title}`;
   return h('div.queue-title', { title: t.prompt }, issue ? h('a', { href: issue.url, target: '_blank', rel: 'noopener' }, text) : text);
 }
 

@@ -5,7 +5,8 @@ import { store } from '../../state';
 import { h, openModal, timeAgo } from '../dom';
 import { issueMeeting } from '../meeting';
 import { providerPicker } from '../provider';
-import { getJson } from './api';
+import { ghRef, sameGh } from '../../../shared/floors';
+import { getJson, inRepo } from './api';
 import { openClose } from './close';
 import { commentBox } from './comment-box';
 import { labelButton, labelChip } from './labels';
@@ -23,7 +24,7 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
   const pill = h('span.pill');
   const conv = h('div.gh-conv');
   const thread = h('div.gh-items');
-  const comment = commentBox('issue', it.number, itemUrl, net, (c) => {
+  const comment = commentBox('issue', it.number, it.repo, itemUrl, net, (c) => {
     if (!detail) return load();
     detail.comments.push(c);
     render();
@@ -36,7 +37,7 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
   const addIssueToQueue = () => {
     if (!queueProvider.valid()) return;
     modal.close();
-    actions.queue(issuePrompt(it), `#${it.number} ${it.title}`, it.number, queueProvider.value(), queueProvider.model(), queueProvider.effort());
+    actions.queue(issuePrompt(it), `${ghRef(it.number, it.repo)} ${it.title}`, it.number, queueProvider.value(), queueProvider.model(), queueProvider.effort(), it.repo);
   };
   const queue = h('button.btn', { type: 'button', onclick: addIssueToQueue }) as HTMLButtonElement;
   const carry = actions.pickUp;
@@ -44,21 +45,21 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
   const meta = h('div.gh-meta');
   const el = h(
     'div.modal.gh-window.issue',
-    { role: 'dialog', 'aria-label': `Issue #${it.number}` },
-    h('header', {}, pill, h('h2', { title: it.title }, `#${it.number} ${it.title}`), close),
+    { role: 'dialog', 'aria-label': `Issue ${ghRef(it.number, it.repo)}` },
+    h('header', {}, pill, h('h2', { title: it.title }, `${ghRef(it.number, it.repo)} ${it.title}`), close),
     meta,
     h('div.gh-body', {}, conv),
     h(
       'footer',
       {},
       h('a.grow', { href: it.url, target: '_blank', rel: 'noopener noreferrer' }, 'Open on GitHub ↗'),
-      h('button.btn', { type: 'button', title: 'Send a worker your own prompt about this issue', onclick: () => actions.ask(issueContext(it), `Ask about issue #${it.number}`) }, '✍️ Ask a worker…'),
-      h('button.btn', { type: 'button', title: 'Workers take it on together in the meeting room: a debate, lead & team, map-reduce or red / blue', onclick: () => actions.meeting(issueMeeting(it.number, it.title)) }, '🤝 Meeting…'),
+      h('button.btn', { type: 'button', title: 'Send a worker your own prompt about this issue', onclick: () => actions.ask(issueContext(it), `Ask about issue ${ghRef(it.number, it.repo)}`) }, '✍️ Ask a worker…'),
+      h('button.btn', { type: 'button', title: 'Workers take it on together in the meeting room: a debate, lead & team, map-reduce or red / blue', onclick: () => actions.meeting(issueMeeting(it.number, it.title, it.repo)) }, '🤝 Meeting…'),
       closeIssue,
       queueProvider.element,
       queue,
       pickUp,
-      h('button.btn.primary', { type: 'button', onclick: () => actions.assign(issuePrompt(it), `Hand issue #${it.number} to a worker`, it.number) }, '🤖 Hand to a worker'),
+      h('button.btn.primary', { type: 'button', onclick: () => actions.assign(issuePrompt(it), `Hand issue ${ghRef(it.number, it.repo)} to a worker`, it.number, it.repo) }, '🤖 Hand to a worker'),
     ),
   );
   const renderFrame = () => {
@@ -75,7 +76,7 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
     );
     pill.className = `pill ${isOpen ? 'done' : 'offline'}`;
     pill.textContent = isOpen ? 'open' : 'closed';
-    const task = store.taskForIssue(it.number);
+    const task = store.taskForIssue(it.number, it.repo);
     const onQueue = !!task && task.status !== 'done';
     closeIssue.classList.toggle('hidden', !isOpen);
     pickUp?.classList.toggle('hidden', !isOpen);
@@ -97,7 +98,7 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
     const g = ++generation;
     error = '';
     render();
-    getJson<GhIssueDetail>(`/api/gh/issue?number=${it.number}`)
+    getJson<GhIssueDetail>(inRepo(`/api/gh/issue?number=${it.number}`, it.repo))
       .then((d) => {
         if (g !== generation) return;
         detail = d;
@@ -109,7 +110,7 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
   }
   const unsubs = [
     store.on('issues', () => {
-      const fresh = store.issues.items.find((i) => i.number === it.number);
+      const fresh = store.issues.items.find((i) => sameGh(i, it.number, it.repo));
       if (!fresh) return;
       // The board can lag behind a close made from here.
       it = detail ? { ...fresh, state: fresh.state === 'OPEN' ? detail.state : fresh.state } : fresh;
@@ -118,7 +119,7 @@ export function openIssue(first: GhIssue, net: Net, actions: BoardActions) {
     store.on('queue', renderFrame),
   ];
   const modal = openModal(el, {
-    doing: `📋 reading issue #${it.number}`,
+    doing: `📋 reading issue ${ghRef(it.number, it.repo)}`,
     onClose: () => {
       comment.dispose();
       unsubs.forEach((u) => u());

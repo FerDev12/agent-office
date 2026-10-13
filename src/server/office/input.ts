@@ -4,8 +4,8 @@ import { MAX_FLOORS } from '../../shared/floors.js';
 import { streetBelow } from '../../shared/layout.js';
 
 export const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
-/** Which of a worker's repositories a Changes message is about: another floor's (see WorkerInfo.repos), or none for its own. */
-export const repoOf = (v: unknown) => str(v, 64) || undefined;
+/** Which of a worker's repositories a Changes message is about, by its name (see WorkerInfo.repos), or none for its first. */
+export const repoOf = (v: unknown) => str(v, 140) || undefined;
 export const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
 /** A spot in the building: where someone stands, and which way they face. */

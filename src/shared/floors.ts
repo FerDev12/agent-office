@@ -68,3 +68,61 @@ export function cloneStep(p: CloneProgress | undefined): string {
 export function cloneLabel(p: CloneProgress | undefined): string {
   return `⏳ ${cloneStep(p)}`;
 }
+
+/**
+ * How a hire names one of a team floor's repositories (see worker.spawn's `repos`): the floor's id and
+ * the checkout's folder in it. A floor id never has a slash, so this never reads as one.
+ */
+export function teamRepoKey(floor: string, path: string): string {
+  return `${floor}/${path}`;
+}
+
+/** The floor and folder of a teamRepoKey; undefined for a plain floor id. */
+export function parseTeamRepoKey(key: string): { floor: string; path: string } | undefined {
+  const at = key.indexOf('/');
+  return at > 0 && at < key.length - 1 ? { floor: key.slice(0, at), path: key.slice(at + 1) } : undefined;
+}
+
+/** The repository part of owner/name ("api"), for showing on a card. */
+export function repoName(repo: string): string {
+  return repo.slice(repo.indexOf('/') + 1);
+}
+
+/** An issue or pull request in a few characters: "#12", or "api#12" on a floor with several repositories. */
+export function ghRef(n: number, repo?: string): string {
+  return repo ? `${repoName(repo)}#${n}` : `#${n}`;
+}
+
+/** owner/name of the repository a github.com issue or pull request URL is in. */
+export function repoOfUrl(url: string | undefined): string | undefined {
+  const m = /github\.com\/([^/]+\/[^/]+)\/(?:pull|issues)\/\d+/i.exec(url ?? '');
+  return m ? normalizeRepo(m[1]) : undefined;
+}
+
+/**
+ * Whether an issue or pull request on a board is the one meant by `number` and `repo`: on a floor with
+ * one repository the number says; on a team floor the repository has to match too, when both are known.
+ */
+export function sameGh(item: { number: number; repo?: string }, number: number, repo?: string): boolean {
+  return item.number === number && (!item.repo || !repo || sameRepo(item.repo, repo));
+}
+
+/** An issue or pull request as a key ("#12", or "acme/api#12" lower-cased on a team floor, where numbers repeat). */
+export function ghKey(n: number, repo?: string): string {
+  return `${repo?.toLowerCase() ?? ''}#${n}`;
+}
+
+/**
+ * Whether a pull request on a floor's board is `ref` (a worker's, say): by its URL on a team floor,
+ * whose repositories repeat numbers, else by its number.
+ */
+export function isPull(p: { number: number; url: string; repo?: string }, ref: { number: number; url?: string }): boolean {
+  return p.repo && ref.url ? p.url.toLowerCase() === ref.url.toLowerCase() : p.number === ref.number;
+}
+
+/** A team floor's repositories in a few words, for the floor lists: "🏢 api · web", or that it has none. */
+export function teamLine(f: { repos?: { repo: string; cloning?: boolean }[] }): string {
+  const repos = f.repos ?? [];
+  if (!repos.length) return '🏢 Team floor · no repositories yet';
+  return `🏢 ${repos.map((r) => `${repoName(r.repo)}${r.cloning ? ' ⏳' : ''}`).join(' · ')}`;
+}

@@ -6,6 +6,8 @@ import { DESK_BY_ID, SEATS, nextFreeSeat } from '../shared/layout.js';
 import { validateWorkerEffort, validateWorkerModel } from './agents.js';
 import { savedEffort, savedModel, takesEffort, takesModel } from '../shared/providers.js';
 import { PROMPTS } from '../shared/prompts.js';
+import { ghRef, normalizeRepo, sameGh, sameRepo } from '../shared/floors.js';
+import type { RepoSource } from './workers/types.js';
 
 /** What the queue needs from the worker manager. Narrow on purpose, so a smoke test can fake it. */
 export interface QueueWorkers {
@@ -16,18 +18,20 @@ export interface QueueWorkers {
   deskOccupied(deskId: string): boolean;
   /** How many rows the floor's back office is built out, for its desks (see WING). */
   wing?(): number;
-  spawn(deskId: string, by: string, prompt: string, worktree: boolean, kind: 'agent', provider: AgentProvider, model?: string, effort?: AgentEffort, meeting?: undefined, owner?: string): WorkerInfo | string;
+  spawn(deskId: string, by: string, prompt: string, worktree: boolean, kind: 'agent', provider: AgentProvider, model?: string, effort?: AgentEffort, meeting?: undefined, owner?: string, repos?: RepoSource[]): WorkerInfo | string;
+  /** A team floor's repositories (see WorkerManager.team): a task for an issue gets a worktree of that issue's. */
+  team?(): RepoSource[];
   /** Resolves with a line about what became of the worker's worktree. */
   kill(id: string): Promise<{ note?: string; error?: string }>;
   /** Fetches what a new worktree starts from; undefined when there's nothing to wait for (see Worktrees.fetch). */
-  fetchBase?(): Promise<void> | undefined;
+  fetchBase?(dirs?: string[]): Promise<void> | undefined;
 }
 
 export interface QueueEvents {
   update(state: QueueState): void;
   toast(text: string, level: 'info' | 'warn' | 'error'): void;
-  /** Mark the issue as taken, on the board at once and on GitHub (as `owner`, when it's an account's task), which keeps it In progress. Resolves to an error message when it can't. */
-  claimIssue(issue: number, owner?: string): Promise<string | undefined>;
+  /** Mark the issue (in `repo`, on a team floor) as taken, on the board at once and on GitHub (as `owner`, when it's an account's task), which keeps it In progress. Resolves to an error message when it can't. */
+  claimIssue(issue: number, owner?: string, repo?: string): Promise<string | undefined>;
   /** Ask GitHub for fresh pull requests, to pick up the one a worker just opened. */
   refreshGitHub(): void;
   /** Why no workers may be hired right now (today's budget is spent), if that's so. */
@@ -67,8 +71,8 @@ export class TaskQueue {
   constructor(
     dataDir: string,
     private workers: QueueWorkers,
-    /** Seat workers in their own git worktree (only when the project is a git repo). */
-    private useWorktree: boolean,
+    /** Seat workers in their own git worktree (only when the project is a git repo, or a team floor has one). */
+    private worktrees: boolean | (() => boolean),
     private events: QueueEvents,
   ) {
     this.statePath = path.join(dataDir, 'queue.json');
@@ -84,9 +88,14 @@ export class TaskQueue {
     return this.maxWorkers;
   }
 
+  /** Seats its workers in their own git worktree. */
+  private get useWorktree(): boolean {
+    return typeof this.worktrees === 'function' ? this.worktrees() : this.worktrees;
+  }
+
   /** Queues a task. With no `provider`, it runs on the office's default worker, model and effort included. */
-  /** Queues a task; `owner` is the account adding it, whose sign-ins its worker will run on. */
-  add(prompt: string, by: string, title?: string, issue?: number, provider?: AgentProvider, model?: string, effort?: AgentEffort, owner?: string): string | undefined {
+  /** Queues a task; `owner` is the account adding it, whose sign-ins its worker will run on. `repo` is its issue's repository, on a team floor. */
+  add(prompt: string, by: string, title?: string, issue?: number, provider?: AgentProvider, model?: string, effort?: AgentEffort, owner?: string, repo?: string): string | undefined {
     if (provider === undefined) ({ provider, model, effort } = this.workers.officeDefault ?? { provider: this.workers.defaultProvider });
     if (!isAgentProvider(provider) || (provider === 'custom' && this.workers.defaultProvider !== 'custom')) return 'Unknown agent provider';
     const modelError = validateWorkerModel('agent', provider, model);
@@ -95,7 +104,8 @@ export class TaskQueue {
     if (effortError) return effortError;
     const clean = prompt.replace(/\r\n?/g, '\n').trim();
     if (!clean) return 'Empty task';
-    if (issue !== undefined && this.tasks.some((t) => t.issue === issue && t.status !== 'done')) return `Issue #${issue} is already on the queue`;
+    repo = issue === undefined ? undefined : normalizeRepo(repo);
+    if (issue !== undefined && this.tasks.some((t) => t.issue !== undefined && sameGh({ number: t.issue, repo: t.repo }, issue, repo) && t.status !== 'done')) return `Issue ${ghRef(issue, repo)} is already on the queue`;
     if (this.tasks.filter((t) => t.status !== 'done').length >= MAX_TASKS) return `The queue is full (${MAX_TASKS} tasks)`;
     const task: QueueTask = {
       id: randomBytes(6).toString('hex'),
@@ -103,6 +113,7 @@ export class TaskQueue {
       model: takesModel(provider) ? model : undefined,
       effort: takesEffort(provider) ? effort : undefined,
       issue,
+      ...(repo ? { repo } : {}),
       title: (title?.trim() || firstLine(clean)).slice(0, 120),
       prompt: clean,
       addedBy: by,
@@ -126,9 +137,9 @@ export class TaskQueue {
     return undefined;
   }
 
-  /** Takes a closed issue's waiting task off the queue (a running one carries on). Returns whether there was one. */
-  dropIssue(issue: number): boolean {
-    const i = this.tasks.findIndex((t) => t.issue === issue && t.status === 'queued');
+  /** Takes a closed issue's (in `repo`, on a team floor) waiting task off the queue (a running one carries on). Returns whether there was one. */
+  dropIssue(issue: number, repo?: string): boolean {
+    const i = this.tasks.findIndex((t) => t.issue !== undefined && sameGh({ number: t.issue, repo: t.repo }, issue, repo) && t.status === 'queued');
     if (i < 0) return false;
     this.tasks.splice(i, 1);
     this.changed();
@@ -153,9 +164,9 @@ export class TaskQueue {
     const t = this.tasks.find((x) => x.id === taskId);
     if (!t) return 'No such task';
     if (t.status !== 'done') return 'That task is still on the queue';
-    if (t.issue !== undefined && this.tasks.some((x) => x !== t && x.issue === t.issue && x.status !== 'done')) return `Issue #${t.issue} is already on the queue`;
+    if (t.issue !== undefined && this.tasks.some((x) => x !== t && x.issue !== undefined && sameGh({ number: x.issue, repo: x.repo }, t.issue!, t.repo) && x.status !== 'done')) return `Issue ${ghRef(t.issue, t.repo)} is already on the queue`;
     this.tasks.splice(this.tasks.indexOf(t), 1);
-    const fresh: QueueTask = { id: t.id, provider: t.provider, model: t.model, effort: t.effort, issue: t.issue, title: t.title, prompt: t.prompt, addedBy: t.addedBy, owner: t.owner, addedAt: Date.now(), status: 'queued' };
+    const fresh: QueueTask = { id: t.id, provider: t.provider, model: t.model, effort: t.effort, issue: t.issue, ...(t.repo ? { repo: t.repo } : {}), title: t.title, prompt: t.prompt, addedBy: t.addedBy, owner: t.owner, addedAt: Date.now(), status: 'queued' };
     this.tasks.push(fresh);
     this.changed();
     this.pump();
@@ -200,9 +211,13 @@ export class TaskQueue {
     for (const t of this.tasks) {
       if (t.status === 'queued') continue;
       const since = (t.startedAt ?? t.addedAt) - 60_000;
+      // On a team floor, a closing reference is only to an issue in the pull request's own repository;
+      // a branch can have a pull request in each, and the issue's comes first.
+      const repo = t.repo ?? this.workers.list().find((w) => w.id === t.workerId)?.worktree?.repo;
+      const inRepo = (p: GhPull) => !repo || !p.repo || sameRepo(p.repo, repo);
       const match = pulls
-        .filter((p) => (t.branch && p.headRefName === t.branch) || (t.issue !== undefined && p.closes.includes(t.issue) && Date.parse(p.createdAt) >= since))
-        .sort((a, b) => Number(b.headRefName === t.branch) - Number(a.headRefName === t.branch) || b.createdAt.localeCompare(a.createdAt))[0];
+        .filter((p) => (t.branch && p.headRefName === t.branch) || (t.issue !== undefined && inRepo(p) && p.closes.includes(t.issue) && Date.parse(p.createdAt) >= since))
+        .sort((a, b) => Number(b.headRefName === t.branch) - Number(a.headRefName === t.branch) || Number(inRepo(b)) - Number(inRepo(a)) || b.createdAt.localeCompare(a.createdAt))[0];
       if (!match) continue;
       const pr = { number: match.number, url: match.url, state: match.isDraft ? 'DRAFT' : match.state, title: match.title };
       if (t.pr && t.pr.number === pr.number && t.pr.state === pr.state && t.pr.title === pr.title) continue;
@@ -324,9 +339,11 @@ export class TaskQueue {
       if (room < 0) break;
       const free = room > 0 ? this.freeDesk() : undefined;
       if (!free && !this.recyclable()) break;
+      // On a team floor, an issue's task works in that issue's repository (else in all of them, see WorkerTrees.make).
+      const repos = t.repo && this.useWorktree ? (this.workers.team?.() ?? []).filter((r) => sameRepo(r.repo, t.repo)) : [];
       // Its worktree starts from what's on GitHub now, PRs merged since included: fetch that first,
       // and come back to seat it once it's in.
-      const fetching = this.useWorktree ? this.workers.fetchBase?.() : undefined;
+      const fetching = this.useWorktree ? this.workers.fetchBase?.(repos.length ? repos.map((r) => r.dir) : undefined) : undefined;
       if (fetching) {
         void fetching.then(() => this.pump());
         break;
@@ -334,7 +351,7 @@ export class TaskQueue {
       const desk = free ?? this.recycleDesk();
       if (!desk) break;
       const note = this.useWorktree ? this.events.worktreeNote?.() ?? PROMPTS['queue.worktree'].text : '';
-      const r = this.workers.spawn(desk, `${t.addedBy} (queue)`, note ? `${t.prompt}\n\n${note}` : t.prompt, this.useWorktree, 'agent', t.provider ?? this.workers.defaultProvider, t.model, t.effort, undefined, t.owner);
+      const r = this.workers.spawn(desk, `${t.addedBy} (queue)`, note ? `${t.prompt}\n\n${note}` : t.prompt, this.useWorktree, 'agent', t.provider ?? this.workers.defaultProvider, t.model, t.effort, undefined, t.owner, repos);
       changed = true;
       if (typeof r === 'string') {
         t.status = 'done';
@@ -353,9 +370,9 @@ export class TaskQueue {
       this.lastStatus.set(r.id, r.status);
       this.events.toast(`📋 ${r.name} sat down at ${DESK_BY_ID.get(desk)?.label ?? 'a desk'} to work on ${label(t)}`, 'info');
       if (t.issue !== undefined) {
-        const issue = t.issue;
-        void this.events.claimIssue(issue, t.owner).then((err) => {
-          if (err) this.events.toast(`Couldn't assign issue #${issue} on GitHub: ${err}`, 'warn');
+        const { issue, repo } = t;
+        void this.events.claimIssue(issue, t.owner, repo).then((err) => {
+          if (err) this.events.toast(`Couldn't assign issue ${ghRef(issue, repo)} on GitHub: ${err}`, 'warn');
         });
       }
     }
@@ -389,6 +406,7 @@ export class TaskQueue {
           model: savedModel(provider, s.model),
           effort: savedEffort(provider, s.effort),
           issue: typeof s.issue === 'number' ? s.issue : undefined,
+          ...(typeof s.issue === 'number' && normalizeRepo(s.repo) ? { repo: normalizeRepo(s.repo) } : {}),
           title: s.title,
           prompt: s.prompt,
           addedBy: s.addedBy ?? '?',
@@ -420,7 +438,7 @@ export class TaskQueue {
 }
 
 function label(t: QueueTask): string {
-  return t.issue !== undefined ? `#${t.issue}` : `“${t.title.length > 40 ? `${t.title.slice(0, 39)}…` : t.title}”`;
+  return t.issue !== undefined ? ghRef(t.issue, t.repo) : `“${t.title.length > 40 ? `${t.title.slice(0, 39)}…` : t.title}”`;
 }
 
 function firstLine(s: string): string {

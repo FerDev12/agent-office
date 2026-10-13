@@ -15,15 +15,17 @@ export interface HookEnv {
   token: string;
 }
 
-/** Another floor's repository for a worker to work in too (see WorkerInfo.repos). */
+/** A repository for a worker to work in (see WorkerInfo.repos): another floor's project, or one of a team floor's. */
 export interface RepoSource {
   floor: string;
-  /** The floor's name, for messages. */
+  /** The floor's name, or the repository's on a team floor, for messages. */
   name: string;
   /** owner/name on GitHub, when known. */
   repo?: string;
   /** Its checkout. */
   dir: string;
+  /** One of the worker's own team floor's repositories: its checkout's folder in the floor's folder (WorkerInfo.worktree.checkout). */
+  checkout?: string;
 }
 
 /** A pull request 'worker.pr' opened, or found already open, for a worker's branch. */
@@ -158,10 +160,17 @@ export interface WorkerHandle<S = unknown> {
  * project, its workers, and what they all do to one. Narrow on purpose: they never import the manager.
  */
 export interface WorkerContext {
-  /** The floor's project checkout. */
+  /** The floor's project checkout, or a team floor's folder. */
   readonly dir: string;
   /** Git plumbing for it. */
   readonly trees: Worktrees;
+  /**
+   * Git plumbing for the checkout a worker's worktree is of: the floor's project, or on a team floor
+   * the repository it names (worktree.checkout). Its paths are relative to `dir` either way.
+   */
+  treesFor(wt?: { checkout?: string }): Worktrees;
+  /** A team floor's repositories, as a worker's own (RepoSource.checkout); undefined on a project's floor. */
+  team(): RepoSource[] | undefined;
   readonly workers: Map<string, Worker>;
   readonly events: WorkerEvents;
   /** The office's prompts, as set in ⚙️ Settings (see prompts.ts). */

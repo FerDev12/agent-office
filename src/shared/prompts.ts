@@ -13,7 +13,7 @@ export const PROMPT_GROUPS: Record<PromptGroup, string> = {
   issues: '📌 Issues board',
   pulls: '🔀 Pull requests board',
   queue: '📋 Task queue',
-  repos: '🗂️ Across repositories',
+  repos: '🗂️ Across repositories and team floors',
   stations: '🧑‍💼 Board agents',
   meetings: '🤝 Meeting room',
   office: '🏷️ Worker signs',
@@ -199,6 +199,26 @@ const DEFS = {
       '- cd into a project\'s folder before running git or its tools, read its own instructions (CLAUDE.md, AGENTS.md, README) before changing it, and install its dependencies there when you need them.',
       "- When the task spans projects, keep them working together and test them together. Commit in each project you change.",
       '- Each project gets its own pull request, from its folder. An issue number in your task (#12) is one of {{home}}\'s; in the other projects\' pull requests write it as {{home}}#12. When you open the pull requests yourself, name the others in each description so they are reviewed and merged together.',
+    ].join('\n'),
+  },
+
+  'floor.team': {
+    group: 'repos',
+    label: '🏢 Team floor brief',
+    used: "Written into a team floor's folder as its CLAUDE.md and AGENTS.md (unless the folder has its own), which every agent hired there reads when it starts. Rewritten whenever the floor's repositories change.",
+    vars: {
+      floor: "The team floor's name",
+      repos: "One line per repository: its folder in the floor's folder, and its project on GitHub",
+    },
+    needs: ['repos'],
+    text: [
+      "You're on the {{floor}} floor of Agent Office. This folder is the floor's own, not a repository itself: each folder in it is a git checkout of one of the team's repositories.",
+      '',
+      '{{repos}}',
+      '',
+      "- cd into a repository's folder before running git, gh or its tools, and read its own instructions (CLAUDE.md, AGENTS.md, README) before changing it. Outside them, give gh the repository: gh issue list -R owner/name.",
+      "- These checkouts are shared with everyone else on the floor: don't switch their branches, stash or reset them unless you're asked to. Make your changes on a branch of your own.",
+      '- An issue or pull request number is only one repository\'s: write it as owner/name#12. When a change spans repositories, commit in each one you change and open a pull request from each, naming the others in every description so they are reviewed and merged together.',
     ].join('\n'),
   },
 

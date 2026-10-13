@@ -2,7 +2,8 @@ import type { GhCloseReason, GhIssue, GhPull } from '../../../shared/protocol';
 import type { Net } from '../../net';
 import { store, workerForPull } from '../../state';
 import { h, openModal } from '../dom';
-import { closeWaiters } from './api';
+import { ghRef } from '../../../shared/floors';
+import { closeWaiters, waitKey } from './api';
 
 // ---- Close dialog -------------------------------------------------------------------------------
 
@@ -10,7 +11,7 @@ const REASON_LABEL: Record<GhCloseReason, string> = { completed: '✅ Completed'
 
 /** Closes an issue (as completed or not planned) or a PR without merging, with an optional comment. */
 export function openClose(kind: 'issue' | 'pull', it: GhIssue | GhPull, net: Net, onClosed: () => void) {
-  const key = `${kind}:${it.number}`;
+  const key = waitKey(kind, it.number, it.repo);
   const pull = kind === 'pull' ? (it as GhPull) : null;
   let reason: GhCloseReason = 'completed';
   let busy = false;
@@ -30,8 +31,8 @@ export function openClose(kind: 'issue' | 'pull', it: GhIssue | GhPull, net: Net
 
   const el = h(
     'div.modal.gh-merge',
-    { role: 'dialog', 'aria-label': `Close ${noun} #${it.number}` },
-    h('header', {}, h('h2', {}, `${pull ? '🚫' : '✔️'} Close ${pull ? 'PR' : 'issue'} #${it.number}`)),
+    { role: 'dialog', 'aria-label': `Close ${noun} ${ghRef(it.number, it.repo)}` },
+    h('header', {}, h('h2', {}, `${pull ? '🚫' : '✔️'} Close ${pull ? 'PR' : 'issue'} ${ghRef(it.number, it.repo)}`)),
     h(
       'div.body',
       {},
@@ -67,7 +68,7 @@ export function openClose(kind: 'issue' | 'pull', it: GhIssue | GhPull, net: Net
       modal.close();
       onClosed();
     });
-    net.send({ t: 'gh.close', kind, number: it.number, comment: comment.value.trim() || undefined, reason: pull ? undefined : reason, deleteBranch: !!pull && del.checked });
+    net.send({ t: 'gh.close', kind, number: it.number, repo: it.repo, comment: comment.value.trim() || undefined, reason: pull ? undefined : reason, deleteBranch: !!pull && del.checked });
   });
   setTimeout(() => comment.focus(), 30);
 }

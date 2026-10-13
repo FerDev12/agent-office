@@ -157,7 +157,7 @@ export interface Gates {
    * it moves to In progress on the board and is assigned on GitHub (see GitHub.claim), and comes off
    * the queue so nobody else is seated for it.
    */
-  takeIssue(c: Client, floor: Floor, n: number): void;
+  takeIssue(c: Client, floor: Floor, n: number, repo?: string): void;
   /**
    * Runs `go` once `c` has a sign-in of their own to `which` (only accounts need one: on the shared
    * password it's the office's own). Without one it looks again, since they may have just signed
@@ -169,7 +169,7 @@ export interface Gates {
    * Worktrees.fetch): right away when that was just fetched, else after a fetch, if `c` and the floor
    * are still there.
    */
-  withFreshBase(c: Client, floor: Floor | Floor[], go: () => void): void;
+  withFreshBase(c: Client, floor: Floor | Floor[], go: () => void, dirs?: (f: Floor) => string[] | undefined): void;
   /** Runs `go` with how the office acts on GitHub for `c`: as them, or as itself (no account, or an admin's choice). */
   withGitHub(c: Client, go: (as: GhAs | undefined) => void, refused?: (why: string) => void): void;
   /** Needs a Claude sign-in of its own when the worker it starts runs Claude. */

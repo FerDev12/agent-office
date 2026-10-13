@@ -1,16 +1,18 @@
 import './elevator.css';
 import type { CloneProgress, FloorInfo, RepoChoice, ServerMsg } from '../../shared/protocol';
-import { cloneLabel, cloneStep, floorPalette, normalizeRepo, sameRepo } from '../../shared/floors';
+import { cloneLabel, cloneStep, floorPalette, normalizeRepo, sameRepo, teamLine } from '../../shared/floors';
 import { ROOF, ROOF_NAME } from '../../shared/rooftop';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, timeAgo, toast, type Modal } from './dom';
 import { confirmDialog } from './prompt';
+import { openNewTeamFloor, openTeamRepos, routeTeamFloorMessage } from './team-floor';
 
 // The elevator's panel: a button for every floor (every project), and "add a project", which clones
-// one of the repositories the office's gh login can see and makes it a new floor. The first time
-// the office runs there are no floors, and this is where you start. Admins can take a floor off the
-// building here too; its checkout stays on disk. Under the floors, it goes down to the garage.
+// one of the repositories the office's gh login can see and makes it a new floor, or a team floor,
+// with several repositories or none (see team-floor.ts). The first time the office runs there are no
+// floors, and this is where you start. Admins can take a floor off the building here too; its
+// checkout stays on disk. Under the floors, it goes down to the garage.
 
 /**
  * The garage under the building, where the elevator goes too. It isn't a floor: it's down under the
@@ -38,6 +40,7 @@ const addedWaiters = new Set<(msg: Extract<ServerMsg, { t: 'floor.added' }>) => 
 
 /** Main feeds server messages through here, so a panel waiting on its clone hears back. */
 export function routeElevatorMessage(msg: ServerMsg) {
+  routeTeamFloorMessage(msg);
   if (msg.t !== 'floor.added') return;
   let heard = false;
   for (const fn of addedWaiters) heard = fn(msg) || heard;
@@ -138,7 +141,7 @@ export function openElevator(opts: ElevatorOptions): void {
         'span.floor-text',
         {},
         h('span.floor-name', {}, f.name, here ? h('span.here-tag', {}, 'you are here') : mine ? h('span.here-tag', {}, 'your floor') : null),
-        h('span.floor-sub', {}, [f.repo ?? f.dir, f.cloning ? f.clone?.detail : ''].filter(Boolean).join(' · ')),
+        h('span.floor-sub', { title: f.team ? (f.repos ?? []).map((r) => r.repo).join(', ') || f.dir : undefined }, f.team ? teamLine(f) : [f.repo ?? f.dir, f.cloning ? f.clone?.detail : ''].filter(Boolean).join(' · ')),
         f.cloning ? cloneBar(f.clone) : null,
       ),
       h('span.floor-stats', {}, ...stats.flatMap((s, j) => (j ? [' ', s] : [s]))),
@@ -151,19 +154,27 @@ export function openElevator(opts: ElevatorOptions): void {
     return btn;
   };
 
-  /** The floor's button, with a 🗑 beside it for admins to take it off the building (⏹ to stop it while it's cloned). */
+  /**
+   * The floor's button, with a 🗑 beside it for admins to take it off the building (⏹ to stop it while
+   * it's cloned), and for a team floor a 🗂️ for its repositories.
+   */
   const floorRow = (f: FloorInfo, i: number) => {
     const btn = floorButton(f, i);
+    const repos = f.team ? h('button.btn.floor-tools', { type: 'button', title: `${f.name}'s repositories: add more${store.me.admin ? ', or take some off' : ''}`, 'aria-label': `${f.name}'s repositories` }, '🗂️') : null;
+    repos?.addEventListener('click', () => {
+      modal.close();
+      openTeamRepos(net, f.id);
+    });
     if (f.cloning) {
       if (!store.me.admin && !(adding && sameRepo(f.repo, adding))) return btn;
       const stop = h('button.btn.floor-off', { type: 'button', title: `Stop cloning ${f.repo ?? f.name}`, 'aria-label': `Stop cloning ${f.name}` }, '⏹️');
       stop.addEventListener('click', () => confirmDialog(`Stop cloning ${f.repo ?? f.name}?`, "What's come down so far is thrown away. You can add it again any time.", '⏹️ Stop cloning', () => net.send({ t: 'floor.cancel', floor: f.id })));
       return h('div.floor-row', {}, btn, stop);
     }
-    if (!store.me.admin) return btn;
+    if (!store.me.admin) return repos ? h('div.floor-row', {}, btn, repos) : btn;
     const off = h('button.btn.floor-off', { type: 'button', title: `Take ${f.name} off the building`, 'aria-label': `Remove ${f.name}` }, '🗑');
     off.addEventListener('click', () => confirmRemove(f));
-    return h('div.floor-row', {}, btn, off);
+    return h('div.floor-row', { class: repos ? 'tools' : '' }, btn, ...(repos ? [repos] : []), off);
   };
 
   const confirmRemove = (f: FloorInfo) => {
@@ -172,7 +183,8 @@ export function openElevator(opts: ElevatorOptions): void {
     const people = f.people ? `Everyone on it rides the elevator to ${next ? next.name : 'the lobby'}. ` : '';
     // The office was started in it: its accounts, password and chat live in that .agent-office too, and stay.
     const own = f.local ? ' The office keeps its own settings there too, so it carries on as before, just without this floor.' : '';
-    confirmDialog(`Take ${f.name} off the building?`, `${workers}${people}Nothing is deleted: its checkout stays in ${f.dir}, .agent-office folder and all.${own}`, '🗑 Remove floor', () => net.send({ t: 'floor.remove', floor: f.id }));
+    const where = f.team ? `its folder stays in ${f.dir}, with its repositories' checkouts and its .agent-office folder` : `its checkout stays in ${f.dir}, .agent-office folder and all`;
+    confirmDialog(`Take ${f.name} off the building?`, `${workers}${people}Nothing is deleted: ${where}.${own}`, '🗑 Remove floor', () => net.send({ t: 'floor.remove', floor: f.id }));
   };
 
   /** The roof, over every floor: the rooftop bar. */
@@ -254,6 +266,16 @@ export function openElevator(opts: ElevatorOptions): void {
     return row;
   };
 
+  /** 🏢 A team floor instead: several repositories, or none (see team-floor.ts). */
+  const teamButton = () => {
+    const team = h('button.btn', { type: 'button', title: 'A floor for a team: a folder of its own with several repositories in it, or none' }, '🏢 New team floor');
+    team.addEventListener('click', () => {
+      modal.close();
+      openNewTeamFloor(net, opts.ride);
+    });
+    return team;
+  };
+
   const renderAdd = () => {
     if (!showAdd) {
       const open = h('button.btn', { type: 'button' }, '➕ Add a project');
@@ -263,7 +285,7 @@ export function openElevator(opts: ElevatorOptions): void {
         renderAdd();
         setTimeout(() => input.focus(), 0);
       });
-      addEl.replaceChildren(open);
+      addEl.replaceChildren(h('div.seg', {}, open, teamButton()));
       addBtn.classList.add('hidden');
       return;
     }
@@ -292,7 +314,7 @@ export function openElevator(opts: ElevatorOptions): void {
           on ? h('p.note', {}, [cloneStep(on.clone), on.clone?.detail].filter(Boolean).join(' · ')) : null,
           h('p.note', {}, 'You can close this and carry on: everyone hears when the new floor opens.'),
         ]
-      : [h('p.note', {}, `Cloned into ${dest} with this machine's gh login. Everything on the new floor works in that checkout.`, change)];
+      : [h('p.note', {}, `Cloned into ${dest} with this machine's gh login. Everything on the new floor works in that checkout.`, change), h('p.note', {}, 'Several repositories on one floor, or none? ', teamButton())];
     statusEl.replaceChildren(...lines.filter((l): l is HTMLElement => !!l), ...[r.error, error].filter(Boolean).map((e) => h('p.err', {}, e)));
     addBtn.disabled = !!adding || !pick || store.floors.some((f) => sameRepo(f.repo, pick));
     addBtn.textContent = adding ? '⏳ Cloning…' : pick ? `🛗 Add ${pick}` : '🛗 Add floor';

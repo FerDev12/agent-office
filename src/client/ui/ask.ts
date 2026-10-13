@@ -4,6 +4,7 @@ import { h, openModal, STATUS_LABEL } from './dom';
 import { store } from '../state';
 import { providerPicker, type ProviderPicker } from './provider';
 import { repoPicker } from './prompt';
+import type { HireRepo } from '../shared/hiring';
 import { dictateField } from './dictate';
 
 // Send a prompt about an issue or PR to a worker: a new one at a free desk, or one already sitting
@@ -30,8 +31,8 @@ export interface AskOptions {
   worktreeOption: boolean;
   /** Offer the configured provider choice for a new worker. */
   providerOption?: boolean;
-  /** Other floors' projects a new worker in its own worktree can work in too (see WorkerInfo.repos). */
-  repoOptions?: { id: string; name: string }[];
+  /** The repositories a new worker in its own worktree can work in (see repoChoices). */
+  repoOptions?: HireRepo[];
   /** `to` is a worker id, or null for a new worker. */
   onSubmit(prompt: string, to: string | null, worktree: boolean, provider?: AgentProvider, model?: string, effort?: AgentEffort, repos?: string[]): void;
 }

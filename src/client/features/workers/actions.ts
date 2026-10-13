@@ -16,7 +16,8 @@ import { aside, key } from '../../core/hint';
 import type { Parts } from '../../core/parts';
 import { STATION_INFO } from '../../core/stations';
 import { askNotifyPermission, notifyPermission } from '../../notify';
-import { repoChoices } from '../../shared/hiring';
+import { canWorktree, repoChoices } from '../../shared/hiring';
+import { isPull } from '../../../shared/floors';
 import { store } from '../../state';
 import { openAsk } from '../../ui/ask';
 import { STATUS_LABEL, clip, closeAllModals, h, toast } from '../../ui/dom';
@@ -77,8 +78,8 @@ export function installWorkerActions(ctx: Ctx, core: CoreState, parts: WorkerAct
     return true;
   }
 
-  function hire(deskId: string, prompt?: string, worktree = false, provider?: AgentProvider, model?: string, effort?: AgentEffort, issue?: number, repos?: string[], via?: 'herald') {
-    net.send({ t: 'worker.spawn', deskId, prompt, worktree, provider, model, effort, issue, repos: repos?.length ? repos : undefined, via });
+  function hire(deskId: string, prompt?: string, worktree = false, provider?: AgentProvider, model?: string, effort?: AgentEffort, issue?: number, repos?: string[], via?: 'herald', issueRepo?: string) {
+    net.send({ t: 'worker.spawn', deskId, prompt, worktree, provider, model, effort, issue, issueRepo: issue ? issueRepo : undefined, repos: repos?.length ? repos : undefined, via });
     // The moment notifications start to matter: ask once (it has to come from a key press or click).
     if (settings.notify && notifyPermission() === 'default' && !askedToNotify) {
       askedToNotify = true;
@@ -102,7 +103,7 @@ export function installWorkerActions(ctx: Ctx, core: CoreState, parts: WorkerAct
         warning: pressureNote(store.machine),
         submitLabel: 'Hire & start',
         providerOption: true,
-        worktreeOption: !!store.project?.branch,
+        worktreeOption: canWorktree(),
         repoOptions: repoChoices(),
         onSubmit: (text, o) => hire(deskId, text, o.worktree, o.provider, o.model, o.effort, undefined, o.repos),
       });
@@ -138,7 +139,7 @@ export function installWorkerActions(ctx: Ctx, core: CoreState, parts: WorkerAct
       submitLabel: 'Hire & start',
       allowEmpty: true,
       providerOption: true,
-      worktreeOption: !!store.project?.branch,
+      worktreeOption: canWorktree(),
       repoOptions: repoChoices(),
       onSubmit: (text, o) => hire(deskId, text || undefined, o.worktree, o.provider, o.model, o.effort, undefined, o.repos),
     });
@@ -245,7 +246,7 @@ export function installWorkerActions(ctx: Ctx, core: CoreState, parts: WorkerAct
   function pullRequestFor(w: WorkerInfo) {
     if (w.repos?.length) return pullRequestsFor(w);
     if (w.pr) {
-      const it = store.pulls.items.find((p) => p.number === w.pr!.number);
+      const it = boardPull(w.pr);
       if (it) openPull(it, net, boardActions());
       else window.open(w.pr.url, '_blank', 'noopener');
       return;
@@ -275,13 +276,18 @@ export function installWorkerActions(ctx: Ctx, core: CoreState, parts: WorkerAct
     if (!workerRepos(w).some((r) => r.pr)) return open();
     openRepoPulls(w.id, {
       openPull: (number, url) => {
-        const it = store.pulls.items.find((p) => p.number === number);
+        const it = boardPull({ number, url });
         if (it) openPull(it, net, boardActions());
         else window.open(url, '_blank', 'noopener');
       },
       openMissing: open,
       changes: (repo) => openWorkerChanges(w.id, repo),
     });
+  }
+
+  /** A pull request on the floor's board (see isPull). */
+  function boardPull(pr: { number: number; url: string }) {
+    return store.pulls.items.find((p) => isPull(p, pr));
   }
 
   /** Puts you in front of a desk, looking at it: the PR board's "Go to desk". */
@@ -473,8 +479,11 @@ export function installWorkerActions(ctx: Ctx, core: CoreState, parts: WorkerAct
     },
   });
 
-  /** A prompt from the boards goes to a new worker at a free desk, or to one already at a desk. With `issue`, that worker takes the issue. */
-  function sendToWorker(title: string, text: { context?: string; initial?: string }, issue?: number) {
+  /**
+   * A prompt from the boards goes to a new worker at a free desk, or to one already at a desk. With
+   * `issue`, that worker takes the issue. `repo` is the repository it's about, on a team floor.
+   */
+  function sendToWorker(title: string, text: { context?: string; initial?: string }, issue?: number, repo?: string) {
     const desk = freeDesk();
     const awake = [...store.workers.values()].filter((w) => w.kind === 'agent' && !isAsleep(w.status));
     if (!desk && !awake.length) {
@@ -486,12 +495,12 @@ export function installWorkerActions(ctx: Ctx, core: CoreState, parts: WorkerAct
       ...text,
       newDesk: desk ? plan().byId.get(desk)!.label : undefined,
       workers: awake.map((w) => ({ id: w.id, name: w.name, color: w.color, status: w.status })),
-      worktreeOption: !!store.project?.branch,
+      worktreeOption: canWorktree(),
       providerOption: true,
-      repoOptions: repoChoices(),
+      repoOptions: repoChoices(repo),
       onSubmit: (prompt, to, worktree, provider, model, effort, repos) => {
-        if (to) net.send({ t: 'worker.prompt', workerId: to, prompt, issue });
-        else if (desk) hire(desk, prompt, worktree, provider, model, effort, issue, repos);
+        if (to) net.send({ t: 'worker.prompt', workerId: to, prompt, issue, issueRepo: issue ? repo : undefined });
+        else if (desk) hire(desk, prompt, worktree, provider, model, effort, issue, repos, undefined, repo);
       },
     });
   }
@@ -499,8 +508,8 @@ export function installWorkerActions(ctx: Ctx, core: CoreState, parts: WorkerAct
   /** What the boards' buttons do: hand an issue to a worker, queue it, call a meeting about it, go to a desk, take its card. */
   function boardActions() {
     return {
-      queue: (prompt: string, title: string, issue: number, provider?: AgentProvider, model?: string, effort?: AgentEffort) => net.send({ t: 'queue.add', prompt, title, issue, provider, model, effort }),
-      assign: (prompt: string, title: string, issue?: number) => sendToWorker(`🤖 ${title}`, { initial: prompt }, issue),
+      queue: (prompt: string, title: string, issue: number, provider?: AgentProvider, model?: string, effort?: AgentEffort, repo?: string) => net.send({ t: 'queue.add', prompt, title, issue, repo, provider, model, effort }),
+      assign: (prompt: string, title: string, issue?: number, repo?: string) => sendToWorker(`🤖 ${title}`, { initial: prompt }, issue, repo),
       ask: (context: string, title: string) => sendToWorker(`✍️ ${title}`, { context }),
       meeting: (preset: MeetingPreset) => parts.meeting.showMeeting(preset),
       goToDesk,

@@ -79,7 +79,9 @@ export async function prune(argv: string[]): Promise<number> {
   try {
     execFileSync('git', ['rev-parse', '--git-dir'], { cwd: dir, stdio: 'ignore' });
   } catch {
-    console.error(`agent-office prune: not a git repository: ${dir}`);
+    // A team floor's folder holds its repositories' checkouts, each pruned on its own.
+    const team = existsSync(path.join(dir, '.agent-office')) ? ` — if it's a team floor's folder, prune each repository's folder in it instead` : '';
+    console.error(`agent-office prune: not a git repository: ${dir}${team}`);
     return 1;
   }
 

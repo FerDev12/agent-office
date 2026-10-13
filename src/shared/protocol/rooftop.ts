@@ -30,6 +30,6 @@ export type RooftopServerMsg =
    * The gong rings, for everyone on the floor: someone hit it, pull request `pr` merged (confetti
    * over the desk it came from), or the last task on the queue just finished (a bigger party).
    */
-  | { t: 'gong'; why: GongWhy; by?: string; pr?: number }
+  | { t: 'gong'; why: GongWhy; by?: string; pr?: number; repo?: string }
   /** Someone on the roof blew the DJ's air horn (sent to everyone up there, them too). */
   | { t: 'horn'; by: string };

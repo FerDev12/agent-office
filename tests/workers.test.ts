@@ -1308,7 +1308,7 @@ test('a Claude worker that opens a pull request itself has it as its own', async
   // A follow-up whose branch already had one: gh fails, and says which.
   hook('PostToolUseFailure', { ...create, error: 'Exit code 1\na pull request for branch "fix-more" into branch "main" already exists:\nhttps://github.com/acme/app/pull/14' });
   assert.equal(pr()?.number, 14);
-  assert.deepEqual(workers.get(worker.id)?.pastPrs, [12], 'the first one is still its own');
+  assert.deepEqual(workers.get(worker.id)?.pastPrs, ['https://github.com/acme/app/pull/12'], 'the first one is still its own, by its URL');
   // Said again, it's no news.
   hook('PostToolUseFailure', { ...create, error: 'Exit code 1\nhttps://github.com/acme/app/pull/14' });
   assert.equal(toasts.length, 2);

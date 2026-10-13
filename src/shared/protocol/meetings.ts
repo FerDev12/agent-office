@@ -55,6 +55,8 @@ export interface Meeting {
   pr?: number;
   /** The GitHub issue it's about, when it was called from one. */
   issue?: number;
+  /** owner/name of the repository that pull request or issue is in, on a team floor. */
+  repo?: string;
   provider?: AgentProvider;
   model?: string;
   effort?: AgentEffort;
@@ -128,6 +130,8 @@ export interface MeetingRequest {
   parts?: string[];
   pr?: number;
   issue?: number;
+  /** owner/name of `pr`'s or `issue`'s repository, on a team floor. */
+  repo?: string;
   rounds?: number;
   provider?: AgentProvider;
   model?: string;

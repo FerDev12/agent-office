@@ -10,6 +10,7 @@
 
 import type { ChatLine, FloorInfo, FloorView, GhIssue, GhPull, GhState, Me, PeerInfo, ProjectInfo, ProjectsDirState, QueueState, QueueTask, RepoChoice, Run, ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { randomLook } from '../../shared/avatar';
+import { isPull, sameGh } from '../../shared/floors';
 import { AVATAR_COLORS, type Profile } from './persist';
 
 /** A worker's terminal as its laptop shows it, put together from the office's 'screen' frames. */
@@ -84,8 +85,10 @@ function floorOf(m: ServerMsg): FloorView | undefined {
 }
 
 /** The worker whose worktree branch a pull request came from, if it is still at a desk. */
-export function workerForPull(workers: Iterable<WorkerInfo>, pr: { number: number; headRefName: string }): WorkerInfo | undefined {
-  for (const w of workers) if (w.pr?.number === pr.number || (w.worktree && w.worktree.branch === pr.headRefName)) return w;
+export function workerForPull(workers: Iterable<WorkerInfo>, pr: { number: number; headRefName: string; url?: string; repo?: string }): WorkerInfo | undefined {
+  // On a team floor numbers repeat across its repositories: its own is known by its URL (see isPull).
+  const mine = (p?: { number: number; url: string }) => !!p && isPull({ ...pr, url: pr.url ?? '' }, p);
+  for (const w of workers) if (mine(w.pr) || (pr.repo && w.repos?.some((r) => mine(r.pr))) || (w.worktree && w.worktree.branch === pr.headRefName)) return w;
   return undefined;
 }
 
@@ -161,8 +164,9 @@ export class Store {
   }
 
   /** The queue task for an issue: the one on the queue if there is one, else the latest finished one. */
-  taskForIssue(issue: number): QueueTask | undefined {
-    const tasks = this.queue.tasks.filter((t) => t.issue === issue);
+  /** The queue's task for an issue (in `repo`, on a team floor): the one still to do, else the last. */
+  taskForIssue(issue: number, repo?: string): QueueTask | undefined {
+    const tasks = this.queue.tasks.filter((t) => t.issue !== undefined && sameGh({ number: t.issue, repo: t.repo }, issue, repo));
     return tasks.find((t) => t.status !== 'done') ?? tasks[tasks.length - 1];
   }
 

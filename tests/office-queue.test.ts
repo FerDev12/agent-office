@@ -23,6 +23,9 @@ test('parses list, add and remove, with their options', () => {
   assert.deepEqual(parseArgs(['add', '--title', 'Fix login']), { cmd: 'add', title: 'Fix login' });
   assert.deepEqual(parseArgs(['add', '--title=Fix login', '--issue', '12']), { cmd: 'add', title: 'Fix login', issue: 12 });
   assert.deepEqual(parseArgs(['add', '--issue=#7', '--title', ' Fix login ', '--prompt', 'Do it']), { cmd: 'add', title: 'Fix login', issue: 7, prompt: 'Do it' });
+  // On a team floor the issue names its repository, with its '#': without one, digits at the end of the name aren't the number.
+  assert.deepEqual(parseArgs(['add', '--title', 'T', '--issue', 'acme/api12#3']), { cmd: 'add', title: 'T', issue: 3, repo: 'acme/api12' });
+  assert.throws(() => parseArgs(['add', '--title', 'T', '--issue', 'acme/api12']), UsageError);
   // A prompt that looks like an option is still the prompt.
   assert.deepEqual(parseArgs(['add', '--title', 'T', '--prompt', '- fix the list']), { cmd: 'add', title: 'T', prompt: '- fix the list' });
 });

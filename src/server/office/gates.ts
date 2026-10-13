@@ -2,21 +2,22 @@ import { WebSocket } from 'ws';
 import type { GhAs } from '../signins.js';
 import type { Floor } from '../floor.js';
 import type { SignInKind } from '../../shared/protocol.js';
+import { ghRef } from '../../shared/floors.js';
 import type { Ctx, Gates } from './context.js';
 import type { Client } from './client.js';
 
 /** What has to be true before something happens for someone: a sign-in of their own, a fresh base, GitHub. */
 export function gates(ctx: Ctx): Gates {
   /**
-   * A worker took on GitHub issue `n` (handed over from its window, or its card dropped on the desk):
+   * A worker took on GitHub issue `n` (in `repo`, on a team floor; handed over from its window, or its card dropped on the desk):
    * it moves to In progress on the board and is assigned on GitHub (see GitHub.claim), and comes off
    * the queue so nobody else is seated for it.
    */
-  const takeIssue = (c: Client, floor: Floor, n: number) => {
-    floor.queue.dropIssue(n);
+  const takeIssue = (c: Client, floor: Floor, n: number, repo?: string) => {
+    floor.queue.dropIssue(n, repo);
     const as = c.accountId ? ctx.signins.ghAs(c.accountId) : undefined;
-    if (typeof as === 'string') return ctx.warn(c, `Couldn't assign issue #${n} on GitHub: ${as}`);
-    void floor.github.claim(n, as).then((err) => ctx.warn(c, err && `Couldn't assign issue #${n} on GitHub: ${err}`));
+    if (typeof as === 'string') return ctx.warn(c, `Couldn't assign issue ${ghRef(n, repo)} on GitHub: ${as}`);
+    void floor.github.claim(n, as, repo).then((err) => ctx.warn(c, err && `Couldn't assign issue ${ghRef(n, repo)} on GitHub: ${err}`));
   };
 
   /**
@@ -41,11 +42,12 @@ export function gates(ctx: Ctx): Gates {
   /**
    * Runs `go` once a worktree made on `floor` would start from what's on GitHub now (see
    * Worktrees.fetch): right away when that was just fetched, else after a fetch, if `c` and the floor
-   * are still there.
+   * are still there. `dirs` says which of a team floor's checkouts the worktree will be of (every one
+   * without, or when it says none for that floor).
    */
-  const withFreshBase = (c: Client, floor: Floor | Floor[], go: () => void) => {
+  const withFreshBase = (c: Client, floor: Floor | Floor[], go: () => void, dirs?: (f: Floor) => string[] | undefined) => {
     const all = Array.isArray(floor) ? floor : [floor];
-    const fetching = all.map((f) => f.workers.fetchBase()).filter((p) => p !== undefined);
+    const fetching = all.map((f) => f.workers.fetchBase(dirs?.(f))).filter((p) => p !== undefined);
     if (!fetching.length) return go();
     void Promise.all(fetching).then(() => {
       if (c.out || c.ws.readyState !== WebSocket.OPEN || all.some((f) => ctx.floors.get(f.id) !== f)) return;

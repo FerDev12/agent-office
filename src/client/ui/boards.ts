@@ -9,6 +9,7 @@ import { inProgress } from './github/progress';
 import type { BoardActions } from './github/prompts';
 import { openPull } from './github/pull-window';
 import { providerLabel } from './provider';
+import { ghRef, repoName, sameRepo } from '../../shared/floors';
 
 const TILTS = ['-1.2deg', '0.8deg', '-0.4deg', '1.4deg', '0deg', '-0.9deg'];
 const NOTE_COLORS = ['#fff7b0', '#ffd6e0', '#caffbf', '#bde0fe', '#ffe5b4'];
@@ -31,7 +32,7 @@ function githubErrorHint(error: string): string {
 
 function issueColumns(items: GhIssue[]): Column<GhIssue>[] {
   const open = items.filter((i) => i.state === 'OPEN');
-  const started = open.filter((i) => inProgress(i, store.taskForIssue(i.number)));
+  const started = open.filter((i) => inProgress(i, store.taskForIssue(i.number, i.repo)));
   const todo = open.filter((i) => !started.includes(i));
   return [
     { key: 'open', title: '📥 Open', items: todo },
@@ -103,8 +104,8 @@ function deskChip(w: WorkerInfo) {
 }
 
 /** Where an issue stands on the 📋 queue, for its card. */
-function queueChip(issue: number): Node | '' {
-  const t = store.taskForIssue(issue);
+function queueChip(issue: number, repo?: string): Node | '' {
+  const t = store.taskForIssue(issue, repo);
   if (!t) return '';
   const provider = providerLabel(t.provider, store.project);
   if (t.status === 'queued') return h('span.qchip', {}, `${store.queue.tasks.find((x) => x.status === 'queued') === t ? '📋 up next' : '📋 queued'} · ${provider}`);
@@ -116,7 +117,8 @@ function queueChip(issue: number): Node | '' {
   return t.pr ? h('span.qchip.done', {}, `🔀 PR #${t.pr.number} · ${provider}`) : '';
 }
 
-function card(n: number, title: string, meta: (Node | string)[], i: number, onclick: () => void, onLabels: () => void) {
+/** A card on the board; on a team floor its number says which repository it's in ("api#12"). */
+function card(n: number, repo: string | undefined, title: string, meta: (Node | string)[], i: number, onclick: () => void, onLabels: () => void) {
   return h(
     'li.card',
     {
@@ -125,8 +127,8 @@ function card(n: number, title: string, meta: (Node | string)[], i: number, oncl
       onclick,
       onkeydown: ((e: KeyboardEvent) => e.key === 'Enter' && e.target === e.currentTarget && onclick()) as EventListener,
     },
-    h('button.card-labels', { type: 'button', title: 'Change the labels', 'aria-label': `Change the labels on #${n}`, onclick: ((e: Event) => (e.stopPropagation(), onLabels())) as EventListener }, '🏷️'),
-    h('div.num', {}, `#${n}`),
+    h('button.card-labels', { type: 'button', title: 'Change the labels', 'aria-label': `Change the labels on ${ghRef(n, repo)}`, onclick: ((e: Event) => (e.stopPropagation(), onLabels())) as EventListener }, '🏷️'),
+    h('div.num', { title: repo }, ghRef(n, repo)),
     h('div.ttl', {}, title),
     h('div.meta', {}, ...meta.filter((m) => m !== '').map((m) => (typeof m === 'string' ? h('span', {}, m) : m))),
   );
@@ -137,7 +139,10 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
   const status = h('span.board-status');
   const refresh = h('button.btn', { title: 'Refresh from GitHub', onclick: () => net.send({ t: 'gh.refresh' }) }, '🔄 Refresh');
   const close = h('button.btn.close', { 'aria-label': 'Close' }, '✕');
-  const el = h('div.modal.board', { role: 'dialog', 'aria-label': kind === 'issues' ? 'Issues board' : 'Pull requests board' }, h('header', {}, h('h2', {}, kind === 'issues' ? '📌 Issues' : '🔀 Pull Requests'), status, refresh, close), body);
+  // On a team floor: which of its repositories the board shows (all of them to start with).
+  const repoBar = h('div.seg.board-repos', { role: 'group', 'aria-label': 'Repositories' });
+  let onlyRepo: string | null = null;
+  const el = h('div.modal.board', { role: 'dialog', 'aria-label': kind === 'issues' ? 'Issues board' : 'Pull requests board' }, h('header', {}, h('h2', {}, kind === 'issues' ? '📌 Issues' : '🔀 Pull Requests'), repoBar, status, refresh, close), body);
 
   const filters = loadFilters(kind);
   /** What each column's filter box holds (column key → text), for as long as the board is open. */
@@ -244,8 +249,19 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
     return section;
   };
 
+  const renderRepos = () => {
+    const here = store.currentFloor();
+    const repos = here?.team ? (here.repos ?? []).filter((r) => !r.cloning).map((r) => r.repo) : [];
+    if (onlyRepo && !repos.some((r) => sameRepo(r, onlyRepo!))) onlyRepo = null;
+    repoBar.classList.toggle('hidden', repos.length < 2);
+    const pick = (repo: string | null) => h('button.btn.small', { type: 'button', class: repo === onlyRepo ? 'on' : '', 'aria-pressed': String(repo === onlyRepo), title: repo ?? 'Every repository on this floor', onclick: () => ((onlyRepo = repo), render()) }, repo ? repoName(repo) : 'All');
+    repoBar.replaceChildren(pick(null), ...repos.map(pick));
+  };
+
   const render = () => {
-    const st = kind === 'issues' ? store.issues : store.pulls;
+    renderRepos();
+    const shown = <T extends { repo?: string }>(s: { items: T[] }) => (onlyRepo ? s.items.filter((it) => sameRepo(it.repo, onlyRepo!)) : s.items);
+    const st = kind === 'issues' ? { ...store.issues, items: shown(store.issues) } : { ...store.pulls, items: shown(store.pulls) };
     status.textContent = st.loading ? 'Refreshing…' : st.fetchedAt ? `Updated ${timeAgo(st.fetchedAt)}` : '';
     // Every refresh rebuilds the columns, so note how far each was scrolled and put it back afterwards,
     // and keep focus (and the caret, in a filter box) on the header, label toggle or box it was on.
@@ -255,26 +271,32 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
     const focused = active && body.contains(active) ? active.getAttribute('data-focus') : null;
     const caret = active instanceof HTMLInputElement ? ([active.selectionStart, active.selectionEnd] as const) : null;
     body.replaceChildren();
+    const here = store.currentFloor();
+    if (here?.team && !here.repos?.some((r) => !r.cloning)) {
+      body.append(h('div.board-error', {}, here.repos?.length ? 'Its repositories are still being cloned: their cards go up once they are here.' : 'This floor has no repositories yet.', h('br'), h('small', {}, 'Add one in the elevator (🛗): every repository on the floor puts its issues and pull requests up here.')));
+      return;
+    }
     if (st.error && !st.items.length) {
       body.append(h('div.board-error', {}, `Couldn't load from GitHub: ${st.error}`, h('br'), h('small', {}, githubErrorHint(st.error))));
       return;
     }
     const all = boardLabels(st.items);
     if (kind === 'issues') {
-      for (const col of issueColumns(store.issues.items)) {
+      for (const col of issueColumns(st.items as GhIssue[])) {
         body.append(
           column(col, all, (it, i) =>
-            card(it.number, it.title, [...labelChips(it.labels), queueChip(it.number), it.assignees.length ? `👤 ${it.assignees.join(', ')}` : it.taken ? '🤖 handed to a worker' : `by ${it.author}`, it.comments ? `💬 ${it.comments}` : '', timeAgo(it.updatedAt)], i, () => openIssue(it, net, actions), () => openLabels('issue', it, net)),
+            card(it.number, it.repo, it.title, [...labelChips(it.labels), queueChip(it.number, it.repo), it.assignees.length ? `👤 ${it.assignees.join(', ')}` : it.taken ? '🤖 handed to a worker' : `by ${it.author}`, it.comments ? `💬 ${it.comments}` : '', timeAgo(it.updatedAt)], i, () => openIssue(it, net, actions), () => openLabels('issue', it, net)),
           ),
         );
       }
     } else {
-      for (const col of pullColumns(store.pulls.items)) {
+      for (const col of pullColumns(st.items as GhPull[])) {
         body.append(
           column(col, all, (it, i) => {
             const w = workerForPull(store.workers.values(), it);
             return card(
               it.number,
+              it.repo,
               it.title,
               [
                 w ? deskChip(w) : '',
@@ -302,7 +324,7 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
     if (caret && again instanceof HTMLInputElement) again.setSelectionRange(caret[0], caret[1]);
   };
 
-  const unsubs = [store.on(kind, render), store.on('queue', render)];
+  const unsubs = [store.on(kind, render), store.on('queue', render), store.on('floors', render)];
   // Which desk a PR came from can change (a worker sent home, a PR opened from a desk).
   if (kind === 'pulls') unsubs.push(store.on('workers', render));
   const timer = setInterval(() => {

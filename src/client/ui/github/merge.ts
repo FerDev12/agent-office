@@ -1,7 +1,8 @@
 import type { GhCheck, GhMergeMethod, GhPull, GhPullDetail } from '../../../shared/protocol';
 import type { Net } from '../../net';
 import { h, openModal } from '../dom';
-import { mergeWaiters } from './api';
+import { ghRef } from '../../../shared/floors';
+import { mergeWaiters, waitKey } from './api';
 import { MERGE_KEY, mergePref, savePref } from './prefs';
 
 // ---- Whether a PR can merge ---------------------------------------------------------------------
@@ -90,8 +91,8 @@ export function openMerge(it: GhPull, d: GhPullDetail, net: Net, handToWorker: (
 
   const el = h(
     'div.modal.gh-merge',
-    { role: 'dialog', 'aria-label': `Merge PR #${it.number}` },
-    h('header', {}, h('h2', {}, `🔀 Merge #${it.number}`)),
+    { role: 'dialog', 'aria-label': `Merge PR ${ghRef(it.number, it.repo)}` },
+    h('header', {}, h('h2', {}, `🔀 Merge ${ghRef(it.number, it.repo)}`)),
     h(
       'div.body',
       {},
@@ -109,7 +110,8 @@ export function openMerge(it: GhPull, d: GhPullDetail, net: Net, handToWorker: (
   renderMethods();
   if (!st.can) go.disabled = true;
 
-  const modal = openModal(el, { onClose: () => mergeWaiters.delete(it.number) });
+  const key = waitKey('pull', it.number, it.repo);
+  const modal = openModal(el, { onClose: () => mergeWaiters.delete(key) });
   cancel.addEventListener('click', () => modal.close());
   worker.addEventListener('click', () => {
     modal.close();
@@ -121,8 +123,8 @@ export function openMerge(it: GhPull, d: GhPullDetail, net: Net, handToWorker: (
     go.disabled = true;
     result.className = 'gh-merge-result';
     result.replaceChildren(h('span.spinner'), auto.checked && st.auto ? 'Asking GitHub to merge it when ready…' : 'Merging…');
-    mergeWaiters.set(it.number, (msg) => {
-      mergeWaiters.delete(it.number);
+    mergeWaiters.set(key, (msg) => {
+      mergeWaiters.delete(key);
       busy = false;
       if (msg.error) {
         go.disabled = false;
@@ -133,7 +135,7 @@ export function openMerge(it: GhPull, d: GhPullDetail, net: Net, handToWorker: (
       modal.close();
       onMerged();
     });
-    net.send({ t: 'gh.merge', number: it.number, method, deleteBranch, auto: auto.checked && st.auto });
+    net.send({ t: 'gh.merge', number: it.number, repo: it.repo, method, deleteBranch, auto: auto.checked && st.auto });
   });
   setTimeout(() => (st.can ? go : cancel).focus(), 30);
 }

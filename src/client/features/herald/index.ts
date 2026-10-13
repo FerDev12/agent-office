@@ -6,7 +6,7 @@ import { officeFull, pressureNote } from '../../../shared/machine';
 import type { Ctx } from '../../core/context';
 import { aside, hintTitle, key, onE } from '../../core/hint';
 import type { Parts } from '../../core/parts';
-import { repoChoices } from '../../shared/hiring';
+import { canWorktree, repoChoices } from '../../shared/hiring';
 import { store } from '../../state';
 import { h, toast } from '../../ui/dom';
 import { openPrompt } from '../../ui/prompt';
@@ -49,7 +49,7 @@ export function installHerald(ctx: Ctx, parts: Pick<Parts, 'place' | 'you' | 'ac
       submitLabel: h.button,
       allowEmpty: true,
       providerOption: true,
-      worktreeOption: !!store.project?.branch,
+      worktreeOption: canWorktree(),
       repoOptions: repoChoices(),
       onSubmit: (text, o) => {
         // Whichever seat is free now (someone may have sat down while you were thinking).

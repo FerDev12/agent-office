@@ -1,17 +1,14 @@
-import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import { MEETING_SEATS } from '../shared/layout.js';
 import { MEETING_NOTES_DIR, MEETING_PATTERNS, isMeetingPattern, meetingRecord, outputProblem, slugify } from '../shared/meetings.js';
 import { isAgentEffort, isAgentProvider, tokensOf, type AgentChoice, type AgentEffort, type AgentProvider, type Meeting, type MeetingRecord, type MeetingRequest, type MeetingState, type MeetingTurn, type WorkerInfo, type WorkerStatus } from '../shared/protocol.js';
 import { validateWorkerEffort, validateWorkerModel } from './agents.js';
 import { providerMeta, takesEffort, takesModel } from '../shared/providers.js';
-import { gitError, type WorktreeRef, type WorktreeState } from './worktrees.js';
+import { commitAll, gitError, type WorktreeRef, type WorktreeState } from './worktrees.js';
+import { normalizeRepo } from '../shared/floors.js';
 import { PROMPTS, fillPrompt, type PromptId, type PromptVars } from '../shared/prompts.js';
-
-const execFileP = promisify(execFile);
 
 /** What the meeting room needs from the worker manager. Narrow on purpose, so a test can fake it. */
 export interface MeetingWorkers {
@@ -40,8 +37,8 @@ export interface MeetingEvents {
   toast(text: string, level: 'info' | 'warn' | 'error'): void;
   /** Why nobody may be hired right now (today's budget is spent), if that's so. */
   hiringPaused(): string | undefined;
-  /** Posts the review panel's review on its pull request. Resolves to the review's URL. */
-  postReview(pr: number, file: string, owner?: string): Promise<string>;
+  /** Posts the review panel's review on its pull request (in `repo`, on a team floor). Resolves to the review's URL. */
+  postReview(pr: number, file: string, owner?: string, repo?: string): Promise<string>;
   /** One of the office's prompts as it has it now (rewritten in ⚙️ Settings, or the default). */
   prompt?(id: PromptId): string;
 }
@@ -146,6 +143,8 @@ export class MeetingRoom {
     const parts = (Array.isArray(req.parts) ? req.parts : []).map((p) => String(p ?? '').trim()).filter(Boolean).slice(0, PARTS_MAX);
     if (pattern.needs === 'parts' && parts.length < count - 1) return `List at least ${count - 1} part${count === 2 ? '' : 's'} for the mappers, one per line (or seat fewer workers)`;
     const issue = Number.isInteger(req.issue) && (req.issue as number) > 0 ? (req.issue as number) : undefined;
+    // On a team floor, which repository the pull request or issue is in.
+    const repo = pr !== undefined || issue !== undefined ? normalizeRepo(req.repo) : undefined;
     const rounds = clamp(Math.floor(Number(req.rounds) || pattern.rounds.default), pattern.rounds.min, pattern.rounds.max);
     const title = (String(req.title ?? '').replace(/\s+/g, ' ').trim() || (pr !== undefined && req.pattern === 'review' ? `Review of PR #${pr}` : firstLine(prompt))).slice(0, 100);
     const id = randomBytes(4).toString('hex');
@@ -178,6 +177,7 @@ export class MeetingRoom {
       parts: pattern.needs === 'parts' ? parts : undefined,
       pr,
       issue,
+      repo,
       provider,
       model,
       effort,
@@ -407,7 +407,7 @@ export class MeetingRoom {
     const cwd = this.cwd(m);
     if (m.pattern === 'review' && m.pr !== undefined) {
       const pr = m.pr;
-      void this.events.postReview(pr, path.join(cwd, m.output), m.owner).then(
+      void this.events.postReview(pr, path.join(cwd, m.output), m.owner, m.repo).then(
         (url) => {
           m.review = { url };
           this.events.toast(`🔍 Posted the panel's review on PR #${pr}`, 'info');
@@ -533,8 +533,8 @@ export class MeetingRoom {
       others: list(others),
       how: how[m.pattern],
       about: m.prompt,
-      pullRequest: m.pr !== undefined ? `The pull request is #${m.pr}: read it with gh pr view ${m.pr} and gh pr diff ${m.pr}.` : '',
-      issue: m.issue !== undefined ? `It comes from GitHub issue #${m.issue}: gh issue view ${m.issue} --comments.` : '',
+      pullRequest: m.pr !== undefined ? `The pull request is ${m.repo ?? ''}#${m.pr}: read it with gh pr view ${m.pr}${ghRepo(m.repo)} and gh pr diff ${m.pr}${ghRepo(m.repo)}.` : '',
+      issue: m.issue !== undefined ? `It comes from GitHub issue ${m.repo ?? ''}#${m.issue}: gh issue view ${m.issue}${ghRepo(m.repo)} --comments.` : '',
       cwd: this.cwd(m),
       notes: path.join(this.cwd(m), m.notes),
       output: m.output,
@@ -712,18 +712,6 @@ export class MeetingRoom {
   }
 }
 
-/**
- * Commits everything in a checkout but `leaveOut` (the notes); resolves to the commit's short hash, or
- * undefined when there was nothing to commit.
- */
-async function commitAll(cwd: string, message: string, leaveOut: string): Promise<string | undefined> {
-  const git = async (args: string[]) => (await execFileP('git', args, { cwd, encoding: 'utf8', timeout: 60_000 })).stdout.trim();
-  await git(['add', '-A', '--', '.', `:(exclude)${leaveOut}`]);
-  if (!(await git(['diff', '--cached', '--name-only']))) return undefined;
-  await git(['commit', '-q', '-m', message]);
-  return git(['rev-parse', '--short', 'HEAD']);
-}
-
 /** The start of a file, at most `bytes` of it. */
 function readStart(file: string, bytes: number): string {
   const fd = openSync(file, 'r');
@@ -761,4 +749,9 @@ function firstLine(s: string): string {
 
 function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
+}
+
+/** gh's -R for a team floor's repository, where the meeting's folder isn't one. */
+function ghRepo(repo: string | undefined): string {
+  return repo ? ` -R ${repo}` : '';
 }

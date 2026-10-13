@@ -27,17 +27,39 @@ export interface ProjectInfo {
 }
 
 /**
- * One floor of the building: a project in its own checkout, with its own desks, workers, boards
- * and queue. You go between them in the elevator.
+ * One of a team floor's repositories (see FloorInfo.team): a checkout of it in the floor's folder.
+ */
+export interface FloorRepo {
+  /** owner/name on GitHub. */
+  repo: string;
+  /** Its checkout's folder in the floor's folder ("api"). */
+  path: string;
+  /** Still being cloned: it joins the floor's boards and worktrees once it's there. */
+  cloning?: boolean;
+  /** How the clone is getting on, once git says. */
+  clone?: CloneProgress;
+}
+
+/**
+ * One floor of the building, with its own desks, workers, boards and queue. You go between them in
+ * the elevator. Most floors are a project in its own checkout; a team floor is a folder of its own
+ * with a checkout of each of its repositories in it, or none at all.
  */
 export interface FloorInfo {
   id: string;
-  /** The repository's name, or the folder's when it isn't on GitHub. */
+  /** The repository's name, or the folder's when it isn't on GitHub; a team floor's own name. */
   name: string;
-  /** owner/name on GitHub. */
+  /** owner/name on GitHub. A team floor has none of its own: its repositories are `repos`. */
   repo?: string;
-  /** Its checkout on the office's machine. */
+  /** Its checkout on the office's machine; a team floor's folder. */
   dir: string;
+  /**
+   * A team floor: a folder of its own rather than one repository's checkout. Its workers start in it,
+   * with every one of `repos` checked out in it, and its boards show all of theirs.
+   */
+  team?: boolean;
+  /** A team floor's repositories, in the order they were added (maybe none). */
+  repos?: FloorRepo[];
   /** The branch that checkout is on ('HEAD' when detached); none when it isn't a git checkout. */
   branch?: string;
   /** Which of FLOOR_PALETTES it's painted in. */
@@ -137,6 +159,15 @@ export type FloorClientMsg =
   | { t: 'floor.repos'; refresh?: boolean }
   /** Clone a repository and make it a new floor; answered with `floor.added` once it's there. */
   | { t: 'floor.add'; repo: string }
+  /**
+   * A team floor, named `name`: a folder of its own, with each of `repos` (owner/name, maybe none)
+   * cloned into it. Answered with `floor.created` as soon as the floor is open; the clones go on there.
+   */
+  | { t: 'floor.create'; name: string; repos: string[] }
+  /** Clone another repository into a team floor (anyone on the building can); it joins once it's there. */
+  | { t: 'floor.repo.add'; floor: string; repo: string }
+  /** Take a repository off a team floor (admins only). Its checkout stays in the floor's folder. */
+  | { t: 'floor.repo.remove'; floor: string; repo: string }
   /** Stop a floor's clone before it's there (admins, or whoever added it); the one who added it hears `floor.added` with why. */
   | { t: 'floor.cancel'; floor: string }
   /** Take a floor off the building (admins only). Its checkout stays on disk; everyone on it rides to another floor. */
@@ -159,6 +190,8 @@ export type FloorServerMsg =
   | { t: 'floor.repos'; repos: RepoChoice[]; error?: string }
   /** Sent to whoever asked for the floor, once it's cloned (or couldn't be). */
   | { t: 'floor.added'; repo: string; floor?: string; error?: string }
+  /** Sent to whoever asked for a team floor (floor.create), once it's open (or why it isn't). */
+  | { t: 'floor.created'; name: string; floor?: string; error?: string }
   /** The projects folder moved (see floor.projectsDir). */
   | { t: 'projectsDir'; state: ProjectsDirState }
   /** Your floor's signs changed, or its back office was built out or walled up. */

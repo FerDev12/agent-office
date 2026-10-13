@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import type { GhCheck, GhCloseReason, GhComment, GhIssue, GhIssueDetail, GhLabel, GhMergeMethod, GhPull, GhPullDetail, GhRepoInfo, GhReviewComment, GhState } from '../shared/protocol.js';
+import { ghKey, repoOfUrl, sameRepo } from '../shared/floors.js';
 import type { GhAs } from './signins.js';
 
 const REFRESH_MS = 90_000;
@@ -107,27 +108,29 @@ function unsupportedJsonField(message: string): string | undefined {
  */
 export class MergeWatch {
   /** Open at the last look; unset until the first, so starting the office up rings for nothing. */
-  private open?: Set<number>;
+  private open?: Set<string>;
   /** Rang for already (merged from the PR window), so the next look doesn't ring them again. */
-  private rang = new Set<number>();
+  private rang = new Set<string>();
 
-  /** The gong rings for `n`: false if it already has. */
-  ring(n: number): boolean {
-    if (this.rang.has(n)) return false;
-    this.rang.add(n);
+  /** The gong rings for `n` (in `repo`, on a team floor): false if it already has. */
+  ring(n: number, repo?: string): boolean {
+    const key = ghKey(n, repo);
+    if (this.rang.has(key)) return false;
+    this.rang.add(key);
     return true;
   }
 
   /** A fresh list from GitHub: the pull requests that merged since the last look and haven't rung yet. */
   look(pulls: GhPull[]): GhPull[] {
     const open = this.open;
-    const merged = open ? pulls.filter((p) => p.state === 'MERGED' && open.has(p.number) && !this.rang.has(p.number)) : [];
+    const merged = open ? pulls.filter((p) => p.state === 'MERGED' && open.has(ghKey(p.number, p.repo)) && !this.rang.has(ghKey(p.number, p.repo))) : [];
     // Once GitHub says it merged, it never shows as open again to ring twice.
-    for (const p of pulls) if (p.state === 'MERGED') this.rang.delete(p.number);
-    this.open = new Set(pulls.filter((p) => p.state === 'OPEN').map((p) => p.number));
+    for (const p of pulls) if (p.state === 'MERGED') this.rang.delete(ghKey(p.number, p.repo));
+    this.open = new Set(pulls.filter((p) => p.state === 'OPEN').map((p) => ghKey(p.number, p.repo)));
     return merged;
   }
 }
+
 
 /**
  * The issues workers just took. Assigning one on GitHub and listing the issues again takes seconds,
@@ -166,7 +169,7 @@ export class GitHub {
   issues: GhState<GhIssue> = { items: [], fetchedAt: 0, loading: false };
   pulls: GhState<GhPull> = { items: [], fetchedAt: 0, loading: false };
   private timer?: NodeJS.Timeout;
-  private repo?: Promise<GhRepoInfo>;
+  private view?: Promise<GhRepoInfo>;
   private login?: Promise<string>;
   private labelList?: { at: number; list: Promise<GhLabel[]> };
   /** Labels just changed from the office, by "issue:N" or "pull:N", and when. */
@@ -180,6 +183,8 @@ export class GitHub {
     private onIssues: (s: GhState<GhIssue>) => void,
     private onPulls: (s: GhState<GhPull>) => void,
     private runGh: GhRunner = gh,
+    /** owner/name, on a team floor: every issue and pull request it lists says it's in this repository (GhIssue.repo). */
+    readonly repo?: string,
   ) {}
 
   start() {
@@ -197,13 +202,13 @@ export class GitHub {
 
   /** The repository's full name and how it lets PRs merge. Asked once (again after a failure). */
   repoInfo(): Promise<GhRepoInfo> {
-    this.repo ??= this.runGh(['repo', 'view', '--json', 'nameWithOwner,squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed'], this.dir).then((out) => {
+    this.view ??= this.runGh(['repo', 'view', '--json', 'nameWithOwner,squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed'], this.dir).then((out) => {
       const r = JSON.parse(out);
       const methods = (['squash', 'merge', 'rebase'] as const).filter((m) => r[{ squash: 'squashMergeAllowed', merge: 'mergeCommitAllowed', rebase: 'rebaseMergeAllowed' }[m]]);
       return { nameWithOwner: String(r.nameWithOwner), methods: methods.length ? methods : ['squash', 'merge', 'rebase'] };
     });
-    this.repo.catch(() => (this.repo = undefined));
-    return this.repo;
+    this.view.catch(() => (this.view = undefined));
+    return this.view;
   }
 
   /** Who the office's own gh is signed in as, which is who it comments as for everyone without their own. Asked once; '' when gh can't say. */
@@ -462,6 +467,7 @@ export class GitHub {
       ]);
       const fetched: GhIssue[] = [...JSON.parse(open), ...JSON.parse(closed)].map((i: any) => ({
         number: i.number,
+        ...(this.repo ? { repo: this.repo } : {}),
         title: i.title,
         state: i.state,
         url: i.url,
@@ -498,6 +504,7 @@ export class GitHub {
       const repo = all.some((p: any) => typeof p.url !== 'string' || !p.url) ? await this.repoInfo().catch(() => undefined) : undefined;
       const fetched: GhPull[] = all.map((p: any) => ({
         number: p.number,
+        ...(this.repo ? { repo: this.repo } : {}),
         title: p.title,
         state: p.state,
         isDraft: !!p.isDraft,
@@ -514,7 +521,11 @@ export class GitHub {
         deletions: p.deletions ?? 0,
         checks: checksOf(p.statusCheckRollup),
         body: String(p.body ?? '').slice(0, 4000),
-        closes: (p.closingIssuesReferences ?? []).map((r: any) => Number(r.number)).filter((n: number) => Number.isInteger(n) && n > 0),
+        closes: (p.closingIssuesReferences ?? [])
+          // Only its own repository's: on a team floor another one's #12 is another issue.
+          .filter((r: any) => !this.repo || !repoOfUrl(r.url) || sameRepo(repoOfUrl(r.url), this.repo))
+          .map((r: any) => Number(r.number))
+          .filter((n: number) => Number.isInteger(n) && n > 0),
       }));
       const items = this.relabel('pull', fetched, asked);
       this.pulls = { items, fetchedAt: Date.now(), loading: false };

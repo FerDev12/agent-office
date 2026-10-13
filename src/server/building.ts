@@ -1,11 +1,13 @@
-import { execFileSync, spawn } from 'node:child_process';
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { FLOOR_PALETTES, MAX_FLOORS, normalizeRepo, sameRepo } from '../shared/floors.js';
-import type { CloneProgress, ProjectsDirState, RepoChoice } from '../shared/protocol.js';
+import type { CloneProgress, FloorRepo, ProjectsDirState, RepoChoice } from '../shared/protocol.js';
 import { CloneRun, dropLog, whyCloneFailed, type CloneEnd, type CloneRunOptions } from './clone.js';
+import { checkoutAt, cloneHere, listRepos, originRepo, tildify, untildify, unwritable, within } from './checkouts.js';
 import { gh } from './github.js';
+import { TEAM_FLOORS_DIR, TeamRepos, validTeamRepos, type FloorRepoDef } from './team-floors.js';
+
+export { originRepo, tildify } from './checkouts.js';
 
 /** A floor as floors.json keeps it. */
 export interface FloorDef {
@@ -13,10 +15,15 @@ export interface FloorDef {
   name: string;
   /** owner/name on GitHub. */
   repo?: string;
+  /** Its checkout; a team floor's folder. */
   dir: string;
   palette: number;
   addedBy: string;
   addedAt: number;
+  /** A team floor (see FloorInfo.team): a folder of the office's, with a checkout of each of `repos` in it. */
+  team?: true;
+  /** A team floor's repositories, in the order they were added. */
+  repos?: FloorRepoDef[];
 }
 
 /** A projects folder picked in ⚙️ Settings (or with --projects), as projects-folder.json keeps it. */
@@ -63,7 +70,6 @@ export interface BuildingOptions {
 
 /** How long the list of repositories `gh` can see is reused before it's asked again. */
 const REPOS_TTL_MS = 5 * 60_000;
-const MAX_REPOS = 1000;
 
 /**
  * The floors of the building, saved in <office>/.agent-office/floors.json: which projects there are,
@@ -91,6 +97,8 @@ export class Building {
   private localFile: string;
   /** That checkout was taken off the building: a restart doesn't put it back. */
   private localOff?: LocalOff;
+  /** The repositories on their way into team floors. */
+  private team: TeamRepos;
 
   constructor(
     /** The office's own data folder; `gh` runs there, since the projects folder may not exist yet. */
@@ -104,6 +112,7 @@ export class Building {
     this.logsDir = path.join(dataDir, 'clones');
     this.pickedFile = path.join(dataDir, 'projects-folder.json');
     this.localFile = path.join(dataDir, 'local-floor.json');
+    this.team = new TeamRepos(dataDir, this.logsDir, { ...opts, changed: () => this.cloneChanged?.() });
     this.load();
     this.loadPicked();
     this.loadLocalOff();
@@ -219,6 +228,7 @@ export class Building {
 
   /** The office is closing: its clones stop, or with `keep` (a restart) carry on for the next office to pick up. */
   shutdown(keep: boolean) {
+    this.team.shutdown(keep);
     for (const p of this.cloning.values()) {
       if (keep) p.run?.release();
       else p.run?.stop('The office closed before the clone finished');
@@ -266,6 +276,7 @@ export class Building {
     const def = this.defs.find((d) => d.id === id);
     if (!def) return this.pendingFloor(id) ? "That floor is still being cloned — stop it, or take it off once it's there" : 'No such floor';
     this.defs = this.defs.filter((d) => d !== def);
+    this.team.drop(def);
     if (this.isLocal(id)) {
       this.localId = undefined;
       this.setLocalOff({ dir: def.dir, by, at: Date.now() });
@@ -327,6 +338,59 @@ export class Building {
     this.defs.push(def);
     this.save();
     return def;
+  }
+
+  /**
+   * A team floor called `name`: a folder of its own in the projects folder (<projects>/_floors/<id>),
+   * with no repositories yet (addRepo clones them into it). Returns the floor, or why there's none.
+   */
+  create(name: string, by: string): FloorDef | string {
+    const title = name.trim().replace(/\s+/g, ' ');
+    if (!title) return 'Give the floor a name';
+    if (title.length > 60) return 'Keep the name to 60 characters';
+    if (this.defs.length + this.cloning.size >= MAX_FLOORS) return `The building is full (${MAX_FLOORS} floors)`;
+    if (this.defs.some((d) => d.name.toLowerCase() === title.toLowerCase())) return `There's a floor called ${title} already`;
+    const def: FloorDef = { ...this.newDef(title, undefined, '', by), team: true, repos: [] };
+    def.dir = path.join(this.projectsDir, TEAM_FLOORS_DIR, def.id);
+    try {
+      mkdirSync(def.dir, { recursive: true });
+    } catch (err) {
+      return `Couldn't make ${tildify(def.dir)}: ${(err as Error).message}`;
+    }
+    this.defs.push(def);
+    this.save();
+    return def;
+  }
+
+  /** A team floor's repositories, the ones on their way included (see TeamRepos.list). */
+  teamRepos(id: string): FloorRepo[] | undefined {
+    const def = this.defs.find((d) => d.id === id);
+    return def?.team ? this.team.list(def) : undefined;
+  }
+
+  /**
+   * Clones `repo` into the team floor `id` (see TeamRepos.add): resolves to the floor once it's on its
+   * list, or to why not. `started` hears as soon as it's on its way.
+   */
+  async addRepo(id: string, repo: string, by: string, started: () => void, account?: string): Promise<{ def: FloorDef; repo: FloorRepoDef } | string> {
+    const def = this.defs.find((d) => d.id === id);
+    if (!def) return 'No such floor';
+    if (!def.team) return `${def.name} is ${def.repo ?? 'its folder'}'s own floor: make a team floor for several repositories`;
+    const r = await this.team.add(def, repo, by, () => this.save(), started, account);
+    return typeof r === 'string' ? r : { def, repo: r };
+  }
+
+  /** Takes a repository off the team floor `id` (admins), or stops its clone (see TeamRepos.remove). */
+  removeRepo(id: string, repo: string, by: string, admin = true, may: (owner: string | undefined) => boolean = () => false): { def: FloorDef; repo: FloorRepoDef; stopping?: true } | string {
+    const def = this.defs.find((d) => d.id === id);
+    if (!def?.team) return def ? `${def.name} isn't a team floor` : 'No such floor';
+    const r = this.team.remove(def, repo, by, () => this.save(), admin, may);
+    return typeof r === 'string' ? r : { def, ...r };
+  }
+
+  /** Picks up the clones into team floors that an office before this one left running (see TeamRepos.resume). */
+  resumeTeamClones(done: (def: FloorDef, r: FloorRepoDef | string) => void) {
+    this.team.resume((id) => this.defs.find((d) => d.id === id), () => this.save(), done);
   }
 
   /** Clones a floor on its way, or checks that what's already there is its repository. Resolves to an error, if any. */
@@ -404,11 +468,12 @@ export class Building {
         this.defs.push({
           id: s.id,
           name: typeof s.name === 'string' && s.name ? s.name.slice(0, 100) : path.basename(s.dir),
-          repo: normalizeRepo(s.repo),
+          repo: s.team ? undefined : normalizeRepo(s.repo),
           dir: s.dir,
           palette: Number.isInteger(s.palette) && (s.palette as number) >= 0 ? (s.palette as number) : 0,
           addedBy: typeof s.addedBy === 'string' ? s.addedBy : '?',
           addedAt: typeof s.addedAt === 'number' ? s.addedAt : Date.now(),
+          ...(s.team === true ? { team: true as const, repos: validTeamRepos(s.repos) } : {}),
         });
       }
     } catch (err) {
@@ -479,109 +544,4 @@ export class Building {
       console.error(`agent-office: couldn't save ${this.clonesFile}: ${(err as Error).message}`);
     }
   }
-}
-
-/** A path under the home folder as ~/…, for showing people. */
-export function tildify(p: string): string {
-  const home = os.homedir();
-  return p === home || p.startsWith(home + path.sep) ? `~${p.slice(home.length)}` : p;
-}
-
-function untildify(p: string): string {
-  return p === '~' || p.startsWith('~/') ? path.join(os.homedir(), p.slice(1)) : p;
-}
-
-/** `dir` is `parent` or somewhere under it. */
-function within(dir: string, parent: string): boolean {
-  const rel = path.relative(parent, dir);
-  return !rel || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
-}
-
-/** Why the office couldn't make checkouts under `dir`, if it couldn't. It's made on the first clone, so it needn't exist yet. */
-function unwritable(dir: string): string | undefined {
-  let at = dir;
-  while (!existsSync(at) && path.dirname(at) !== at) at = path.dirname(at);
-  try {
-    if (!statSync(at).isDirectory()) return `${tildify(at)} isn't a folder`;
-    accessSync(at, constants.W_OK);
-  } catch {
-    return `The office can't write in ${tildify(at)}`;
-  }
-  return undefined;
-}
-
-/** The GitHub repository a checkout's origin points at. */
-export function originRepo(dir: string): string | undefined {
-  try {
-    const url = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 }).trim();
-    return /github\.com[/:]/i.test(url) ? normalizeRepo(url) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * What's at `dest`: nothing yet ('none'), a checkout of `repo` ('ok'), or why it's in the way. A
- * clone that was cut off has its origin but no commit checked out; an `empty` repository has none to.
- */
-function checkoutAt(dest: string, repo: string, empty: boolean): 'none' | 'ok' | string {
-  if (!existsSync(dest)) return 'none';
-  if (!statSync(dest).isDirectory()) return `${dest} is already there and isn't a folder`;
-  if (!readdirSync(dest).length) return 'none';
-  if (!sameRepo(originRepo(dest), repo)) return `${dest} already exists and isn't a checkout of ${repo} — move it out of the way first`;
-  if (!empty && !hasCommit(dest)) return `${dest} is a clone of ${repo} that didn't finish — delete that folder and add the floor again`;
-  return 'ok';
-}
-
-function hasCommit(dir: string): boolean {
-  try {
-    execFileSync('git', ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], { cwd: dir, stdio: 'ignore', timeout: 10_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Clones `repo` to `dest` in this terminal: git shows its progress, and ssh or git can ask here. Resolves to an error, if any. */
-function cloneHere(repo: string, dest: string): Promise<string | undefined> {
-  return new Promise((resolve) => {
-    const child = spawn('gh', ['repo', 'clone', repo, dest], { cwd: path.dirname(dest), stdio: 'inherit' });
-    child.once('error', (err: NodeJS.ErrnoException) => resolve(err.code === 'ENOENT' ? "The GitHub CLI (gh) isn't installed on this machine" : `Couldn't run gh: ${err.message}`));
-    child.once('exit', (code, signal) => resolve(code === 0 ? undefined : `Couldn't clone ${repo}: gh ${signal ? `stopped (${signal})` : `failed (exit ${code})`}`));
-  });
-}
-
-async function listRepos(cwd: string): Promise<RepoChoice[]> {
-  const out = await gh(
-    [
-      'api',
-      '--paginate',
-      'user/repos?per_page=100&sort=pushed&affiliation=owner,collaborator,organization_member',
-      '--jq',
-      '.[] | {name: .full_name, description: (.description // ""), private: .private, pushedAt: .pushed_at}',
-    ],
-    cwd,
-    90_000,
-  );
-  const repos: RepoChoice[] = [];
-  const seen = new Set<string>();
-  for (const line of out.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const r = JSON.parse(line) as { name?: unknown; description?: unknown; private?: unknown; pushedAt?: unknown };
-      const name = normalizeRepo(r.name);
-      if (!name || seen.has(name.toLowerCase())) continue;
-      seen.add(name.toLowerCase());
-      repos.push({
-        name,
-        description: typeof r.description === 'string' && r.description ? r.description.slice(0, 200) : undefined,
-        private: r.private === true,
-        pushedAt: typeof r.pushedAt === 'string' ? r.pushedAt : undefined,
-      });
-    } catch {
-      // not a line of ours
-    }
-    if (repos.length >= MAX_REPOS) break;
-  }
-  return repos.sort((a, b) => (b.pushedAt ?? '').localeCompare(a.pushedAt ?? ''));
 }

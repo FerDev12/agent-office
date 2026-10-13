@@ -12,6 +12,7 @@ import type { Stage, Worker } from '../../world/character';
 import type { Area } from '../../world/confetti';
 import type { Court } from '../../world/court';
 import type { DeskView } from '../../world/types';
+import { sameGh } from '../../../shared/floors';
 
 // The kinds of thing you can use that this defines (see InteractKinds in world/types.ts).
 declare module '../../world/types' {
@@ -79,9 +80,9 @@ export function installGong(ctx: Ctx, deps: GongDeps) {
   const CONFETTI_MOST = 4000;
   const floorArea = (a: Area) => (a.maxX - a.minX) * (a.maxZ - a.minZ);
 
-  ctx.messages.on('gong', (msg) => gongRang(msg.why, msg.pr));
+  ctx.messages.on('gong', (msg) => gongRang(msg.why, msg.pr, msg.repo));
   /** Someone hit the gong, a pull request merged (a dance party under a confetti rain), or the queue emptied (a party). */
-  function gongRang(why: GongWhy, pr?: number) {
+  function gongRang(why: GongWhy, pr?: number, repo?: string) {
     const world = ctx.world();
     const confetti = ctx.confetti;
     const gong = world.gong;
@@ -95,7 +96,7 @@ export function installGong(ctx: Ctx, deps: GongDeps) {
       const area = world.rain.reduce((n, r) => n + floorArea(r.area), 0);
       const density = Math.min(CONFETTI_DENSITY, CONFETTI_MOST / Math.max(1, area));
       for (const r of world.rain) confetti.rain(r.area, floorArea(r.area) * density, 3, r.top);
-      const it = store.pulls.items.find((p) => p.number === pr);
+      const it = pr === undefined ? undefined : store.pulls.items.find((p) => sameGh(p, pr, repo));
       const w = pr === undefined ? undefined : workerForPull(store.workers.values(), it ?? { number: pr, headRefName: '' });
       if (w && deps.workerViews.has(w.id)) deps.burstOver(w.deskId, 220);
       else confetti.burst(top.x, top.y, top.z, 220);

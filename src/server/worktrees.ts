@@ -45,7 +45,15 @@ export class Worktrees {
   /** The last fetch's error, so the office's log says it once rather than on every hire. */
   private fetchError?: string;
 
-  constructor(private dir: string) {
+  /**
+   * `base` is the folder its worktrees' paths (WorktreeRef.path) are relative to, and the one whose
+   * .agent-office/worktrees they're made in: the project itself, or for one of a team floor's
+   * repositories, the floor's folder its checkout is in.
+   */
+  constructor(
+    private dir: string,
+    private base = dir,
+  ) {
     this.root = real(dir);
   }
 
@@ -58,7 +66,7 @@ export class Worktrees {
    * `slug`, which is in `root` (the worker's own floor, when that isn't this project). The path it
    * returns is relative to `root`.
    */
-  create(slug: string, sub?: string, root = this.dir): (Required<Omit<WorktreeRef, 'made'>> & { from?: string; note?: string }) | string {
+  create(slug: string, sub?: string, root = this.base): (Required<Omit<WorktreeRef, 'made'>> & { from?: string; note?: string }) | string {
     try {
       const from = this.currentBranch();
       const { base, note } = this.startPoint(from);
@@ -164,7 +172,7 @@ export class Worktrees {
    */
   async branchOf(wt: WorktreeRef): Promise<string | undefined> {
     if (!wt.path) return undefined;
-    const abs = path.join(this.dir, wt.path);
+    const abs = path.join(this.base, wt.path);
     if (!existsSync(abs)) return undefined;
     const b = await this.git(['rev-parse', '--abbrev-ref', 'HEAD'], abs).catch(() => '');
     return b && b !== 'HEAD' ? b : undefined;
@@ -206,7 +214,7 @@ export class Worktrees {
    */
   async restore(wt: WorktreeRef): Promise<{ from: LostBranch } | { error: string }> {
     if (!wt.path) return { error: 'it has no folder to put back' };
-    const abs = path.join(this.dir, wt.path);
+    const abs = path.join(this.base, wt.path);
     try {
       // Git still lists the deleted folder, and won't check its branch out anywhere else while it does.
       await this.git(['worktree', 'prune']);
@@ -254,7 +262,7 @@ export class Worktrees {
    * before it don't count as unpushed, even once GitHub has deleted the branch.
    */
   async inspect(wt: WorktreeRef, landed?: string): Promise<WorktreeState> {
-    const abs = wt.path ? path.join(this.dir, wt.path) : undefined;
+    const abs = wt.path ? path.join(this.base, wt.path) : undefined;
     const exists = !!abs && existsSync(abs);
     const state: WorktreeState = { exists, dirty: 0, ahead: 0, unpushed: 0 };
     try {
@@ -276,7 +284,7 @@ export class Worktrees {
   async remove(wt: WorktreeRef, cleanup: 'worktree' | 'all'): Promise<string | undefined> {
     try {
       if (wt.path) {
-        const abs = path.join(this.dir, wt.path);
+        const abs = path.join(this.base, wt.path);
         if (existsSync(abs)) {
           try {
             await this.git(['worktree', 'remove', '--force', '--force', abs]);
@@ -339,7 +347,7 @@ export class Worktrees {
 
   /** True for a folder inside .agent-office/worktrees, the only place this class deletes on its own. */
   owns(abs: string): boolean {
-    return within(path.join(this.root, WORKTREES_DIR), real(abs));
+    return within(path.join(real(this.base), WORKTREES_DIR), real(abs));
   }
 
   private gitSync(args: string[], cwd = this.dir): string {
@@ -395,4 +403,16 @@ function isDir(p: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Commits everything in a checkout but `leaveOut` (the notes); resolves to the commit's short hash, or
+ * undefined when there was nothing to commit.
+ */
+export async function commitAll(cwd: string, message: string, leaveOut: string): Promise<string | undefined> {
+  const git = async (args: string[]) => (await execFileP('git', args, { cwd, encoding: 'utf8', timeout: 60_000 })).stdout.trim();
+  await git(['add', '-A', '--', '.', `:(exclude)${leaveOut}`]);
+  if (!(await git(['diff', '--cached', '--name-only']))) return undefined;
+  await git(['commit', '-q', '-m', message]);
+  return git(['rev-parse', '--short', 'HEAD']);
 }
