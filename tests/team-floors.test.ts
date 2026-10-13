@@ -118,13 +118,18 @@ test("a team floor's boards put every repository's issues together, each saying 
   boards.stop();
 });
 
-test("a project's floor has one board, untouched: no repository on its cards, and every action goes to it", async () => {
+test("a project's floor has one board, untouched: no repository on its cards, and every action about its own goes to it", async () => {
   let issues: GhState<GhIssue> | undefined;
   const boards = new Boards((s) => (issues = s), () => {}, twoRepos);
-  await boards.set([{ dir: '/x/app' }]);
+  await boards.set([{ dir: '/x/app', home: 'acme/app' }]);
   assert.deepEqual(issues?.items.map((i) => [i.repo, i.number]), [[undefined, 1]]);
   assert.ok(typeof boards.for() !== 'string');
-  assert.ok(typeof boards.for('acme/anything') !== 'string', 'a floor with one repository has no other to mean');
+  assert.ok(typeof boards.for('ACME/app') !== 'string');
+  // An issue in another repository (office-queue add --issue other/lib#12) isn't this one's #12.
+  assert.match(String(boards.for('other/lib')), /isn't this floor's repository/);
+  // A checkout that isn't on GitHub can't tell, so it takes them.
+  await boards.set([{ dir: '/x/app' }]);
+  assert.ok(typeof boards.for('other/lib') !== 'string');
   boards.stop();
 });
 
@@ -263,7 +268,8 @@ test('a team floor is a folder of its own, its repositories cloned into it one f
   assert.match(String(await office.addRepo(def.id, 'acme/nope', 'ann', () => {})), /Couldn't find acme\/nope/);
   assert.equal(await office.addRepo('nowhere', 'acme/web', 'ann', () => {}), 'No such floor');
 
-  // Taken off, its checkout stays; added again, it moves back into the same folder without a clone.
+  // Only admins take one off. Taken off, its checkout stays; added again, it moves back into the same folder without a clone.
+  assert.match(String(office.removeRepo(def.id, 'acme/api', 'bob', false, () => true)), /Only admins/);
   const off = office.removeRepo(def.id, 'acme/api', 'admin');
   assert.equal(typeof off, 'object', String(off));
   assert.deepEqual(office.teamRepos(def.id)?.map((r) => r.repo), ['acme/web', 'other/api']);
@@ -528,11 +534,14 @@ test("a worker in a team floor's folder that opens a pull request itself has it,
   const prs = (workers as any).prs;
   prs.noteOwn(handle, 'gh pr create --fill', 'https://github.com/acme/web/pull/3\n');
   assert.deepEqual(workers.get(w.id)?.pr, { number: 3, url: 'https://github.com/acme/web/pull/3' });
-  // Another repository's #3 isn't kept by number alongside it: its number would say nothing.
+  // The ones before stay its own, by URL: they may be in another of the floor's repositories.
   prs.noteOwn(handle, 'gh pr create --fill', 'https://github.com/acme/api/pull/5\n');
-  assert.deepEqual([workers.get(w.id)?.pr?.url, workers.get(w.id)?.pastPrs], ['https://github.com/acme/api/pull/5', undefined]);
   prs.noteOwn(handle, 'gh pr create --fill', 'https://github.com/acme/api/pull/6\n');
-  assert.deepEqual(workers.get(w.id)?.pastPrs, [5]);
+  assert.deepEqual(workers.get(w.id)?.pastPrs, ['https://github.com/acme/web/pull/3', 'https://github.com/acme/api/pull/5']);
+  // So web's #3 still open keeps it from having landed, though api's #6 merged.
+  const info = workers.get(w.id)!;
+  const pulls = [pull(3, 'acme/web', 'OPEN', 'x'), pull(6, 'acme/api', 'MERGED', 'y'), pull(3, 'acme/api', 'MERGED', 'z')];
+  assert.deepEqual(workerPr(info, pulls, []), { state: 'open', number: 3, repo: 'acme/web' });
   // One outside the floor isn't its own.
   prs.noteOwn(handle, 'gh pr create --fill', 'https://github.com/someone/else/pull/9\n');
   assert.equal(workers.get(w.id)?.pr?.number, 6);

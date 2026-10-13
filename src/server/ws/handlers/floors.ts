@@ -70,10 +70,9 @@ export const floorHandlers = {
   },
   'floor.repo.remove'(ctx, c, msg) {
     const who = c.peer.name;
-    // Everyone's work on it there loses its boards: admins do it.
-    if (!ctx.meOf(c.accountId).admin) return ctx.warn(c, "Only admins can take a repository off a floor");
+    // Everyone's work in it loses its boards: admins do it. A clone on its way, whoever added it can stop too.
     const id = str(msg.floor, 64);
-    const r = ctx.building.removeRepo(id, str(msg.repo, 200), who);
+    const r = ctx.building.removeRepo(id, str(msg.repo, 200), who, ctx.meOf(c.accountId).admin, (owner) => !!owner && owner === c.accountId);
     if (typeof r === 'string') return ctx.warn(c, r);
     ctx.floorsChanged();
     // A clone being stopped: whoever added it hears once it has (see addRepo).

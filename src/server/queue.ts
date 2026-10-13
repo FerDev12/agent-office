@@ -24,7 +24,7 @@ export interface QueueWorkers {
   /** Resolves with a line about what became of the worker's worktree. */
   kill(id: string): Promise<{ note?: string; error?: string }>;
   /** Fetches what a new worktree starts from; undefined when there's nothing to wait for (see Worktrees.fetch). */
-  fetchBase?(): Promise<void> | undefined;
+  fetchBase?(dirs?: string[]): Promise<void> | undefined;
 }
 
 export interface QueueEvents {
@@ -339,9 +339,11 @@ export class TaskQueue {
       if (room < 0) break;
       const free = room > 0 ? this.freeDesk() : undefined;
       if (!free && !this.recyclable()) break;
+      // On a team floor, an issue's task works in that issue's repository (else in all of them, see WorkerTrees.make).
+      const repos = t.repo && this.useWorktree ? (this.workers.team?.() ?? []).filter((r) => sameRepo(r.repo, t.repo)) : [];
       // Its worktree starts from what's on GitHub now, PRs merged since included: fetch that first,
       // and come back to seat it once it's in.
-      const fetching = this.useWorktree ? this.workers.fetchBase?.() : undefined;
+      const fetching = this.useWorktree ? this.workers.fetchBase?.(repos.length ? repos.map((r) => r.dir) : undefined) : undefined;
       if (fetching) {
         void fetching.then(() => this.pump());
         break;
@@ -349,8 +351,6 @@ export class TaskQueue {
       const desk = free ?? this.recycleDesk();
       if (!desk) break;
       const note = this.useWorktree ? this.events.worktreeNote?.() ?? PROMPTS['queue.worktree'].text : '';
-      // On a team floor, an issue's task works in that issue's repository (else in all of them, see WorkerTrees.make).
-      const repos = t.repo && this.useWorktree ? (this.workers.team?.() ?? []).filter((r) => sameRepo(r.repo, t.repo)) : [];
       const r = this.workers.spawn(desk, `${t.addedBy} (queue)`, note ? `${t.prompt}\n\n${note}` : t.prompt, this.useWorktree, 'agent', t.provider ?? this.workers.defaultProvider, t.model, t.effort, undefined, t.owner, repos);
       changed = true;
       if (typeof r === 'string') {

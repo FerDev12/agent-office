@@ -7,7 +7,7 @@
 import { Net } from './net';
 import { AVATAR_COLORS, loadProfile, loadSettings, saveProfile, store } from './state';
 import { randomLook } from '../shared/avatar';
-import { cloneLabel, repoName } from '../shared/floors';
+import { cloneLabel, isPull, teamLine } from '../shared/floors';
 import { ROOF } from '../shared/rooftop';
 import { DESK_BY_ID, nextFreeSeat } from '../shared/layout';
 import { isAsleep } from '../shared/status';
@@ -94,8 +94,6 @@ function offTheRoof() {
 }
 
 // ---- The floor you're on ------------------------------------------------------------------------
-/** A team floor's repositories in a few words. */
-const teamLine = (f: FloorInfo) => (f.repos?.length ? `🏢 ${f.repos.map((r) => repoName(r.repo)).join(' · ')}` : '🏢 no repositories yet');
 const floorSelect = $('floor') as HTMLSelectElement;
 const floorLabel = (f: FloorInfo) => `${f.name}${f.cloning ? ` (${cloneLabel(f.clone)})` : f.waiting ? ` · 🙋 ${f.waiting}` : ''}`;
 
@@ -310,8 +308,7 @@ function showMeeting(preset?: MeetingPreset) {
       openPr: (id) => {
         const w = store.workers.get(id);
         if (!w) return;
-        // On a team floor numbers repeat across its repositories: its own is known by its URL.
-        const it = w.pr && store.pulls.items.find((p) => (p.repo ? p.url.toLowerCase() === w.pr!.url.toLowerCase() : p.number === w.pr!.number));
+        const it = w.pr && store.pulls.items.find((p) => isPull(p, w.pr!));
         if (it) openPull(it, net, boardActions());
         else if (w.pr) window.open(w.pr.url, '_blank', 'noopener');
         else net.send({ t: 'worker.pr', workerId: id });

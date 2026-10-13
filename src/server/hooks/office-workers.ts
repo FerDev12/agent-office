@@ -160,7 +160,7 @@ export async function officeWorkers(ctx: Ctx, req: http.IncomingMessage, res: ht
   if (ask.issue && floor.def.team && !repo) return send(res, 400, { error: `${floor.def.name} has several repositories: say which the issue is in (repo: owner/name, or --issue owner/name#${ask.issue})` });
   const repos = repo && worktree ? (floor.workers.team?.() ?? []).filter((r) => sameRepo(r.repo, repo)) : [];
   // Its worktree starts from what's on GitHub now, like one hired from a desk.
-  if (worktree) await floor.workers.fetchBase();
+  if (worktree) await floor.workers.fetchBase(repos.length ? repos.map((r) => r.dir) : undefined);
   if (!ctx.floors.has(floor.id)) return send(res, 410, { error: 'This floor closed' });
   // It runs as whoever the asking worker runs as.
   const owner = floor.workers.ownerOf(me.id);

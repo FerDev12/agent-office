@@ -63,8 +63,11 @@ export interface WorkerInfo {
   lost?: { branch: LostBranch };
   /** Its pull request: opened from this desk for the worktree branch (see 'worker.pr'), by itself with `gh pr create`, or said to be its own. */
   pr?: { number: number; url: string };
-  /** The pull requests it opened itself before `pr`: while one of them is open, its work hasn't all landed. */
-  pastPrs?: number[];
+  /**
+   * The pull requests it opened itself before `pr`, by URL (by number, in its floor's repository, when
+   * saved before team floors): while one of them is open, its work hasn't all landed.
+   */
+  pastPrs?: (string | number)[];
   /**
    * Other repositories it works in too, for a task that spans them: other floors' projects, or more
    * of its own team floor's repositories. It then starts in a workspace folder with a worktree of

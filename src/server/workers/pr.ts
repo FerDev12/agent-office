@@ -3,7 +3,6 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkerInfo } from '../../shared/protocol.js';
-import { repoOfUrl } from '../../shared/floors.js';
 import { DESK_BY_ID } from '../../shared/layout.js';
 import { isBusy } from '../../shared/status.js';
 import { gh } from '../github.js';
@@ -118,10 +117,9 @@ export class WorkerPrs {
     const other = same(home) ? undefined : info.repos?.find((r) => same(r.repo));
     if (!other && !same(home) && !team?.some((t) => same(t.repo))) return;
     if ((other ?? info).pr?.url === pr.url) return;
-    // The one it had may still be open (a second task, a follow-up): it stays its own too, as long as
-    // it's in the same repository (its number says which only there, see workerPr).
-    if (!other && info.pr && same(repoOfUrl(info.pr.url) ?? pr.repo)) info.pastPrs = [...new Set([...(info.pastPrs ?? []), info.pr.number])].filter((n) => n !== pr.number).slice(-MAX_PAST_PRS);
-    else if (!other && info.pr) info.pastPrs = undefined;
+    // The one it had may still be open (a second task, a follow-up): it stays its own too, by its URL,
+    // since on a team floor it may be in another of the floor's repositories.
+    if (!other && info.pr) info.pastPrs = [...new Set([...(info.pastPrs ?? []), info.pr.url])].filter((p) => p !== pr.url).slice(-MAX_PAST_PRS);
     (other ?? info).pr = { number: pr.number, url: pr.url };
     this.ctx.persist();
     this.ctx.emit(w);

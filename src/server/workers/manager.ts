@@ -207,10 +207,10 @@ export class WorkerManager {
 
   /**
    * Fetches the branch the project is on, so a worktree made next starts from what's on GitHub now
-   * (see Worktrees.fetch). Undefined when there's nothing to wait for.
+   * (see Worktrees.fetch); on a team floor, each of its checkouts in `dirs` (every one without). Undefined when there's nothing to wait for.
    */
-  fetchBase(): Promise<void> | undefined {
-    const team = this.team?.();
+  fetchBase(dirs?: string[]): Promise<void> | undefined {
+    const team = this.team?.().filter((r) => !dirs || dirs.includes(r.dir));
     if (!team) return this.trees.fetch();
     const all = team.map((r) => this.ctx.treesFor(r).fetch()).filter((p) => p !== undefined);
     return all.length ? Promise.all(all).then(() => undefined) : undefined;

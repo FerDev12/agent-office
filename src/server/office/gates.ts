@@ -42,11 +42,12 @@ export function gates(ctx: Ctx): Gates {
   /**
    * Runs `go` once a worktree made on `floor` would start from what's on GitHub now (see
    * Worktrees.fetch): right away when that was just fetched, else after a fetch, if `c` and the floor
-   * are still there.
+   * are still there. `dirs` says which of a team floor's checkouts the worktree will be of (every one
+   * without, or when it says none for that floor).
    */
-  const withFreshBase = (c: Client, floor: Floor | Floor[], go: () => void) => {
+  const withFreshBase = (c: Client, floor: Floor | Floor[], go: () => void, dirs?: (f: Floor) => string[] | undefined) => {
     const all = Array.isArray(floor) ? floor : [floor];
-    const fetching = all.map((f) => f.workers.fetchBase()).filter((p) => p !== undefined);
+    const fetching = all.map((f) => f.workers.fetchBase(dirs?.(f))).filter((p) => p !== undefined);
     if (!fetching.length) return go();
     void Promise.all(fetching).then(() => {
       if (c.out || c.ws.readyState !== WebSocket.OPEN || all.some((f) => ctx.floors.get(f.id) !== f)) return;

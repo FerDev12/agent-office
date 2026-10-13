@@ -298,6 +298,8 @@ export class Floor {
         if (!w) return undefined;
         const wt = w.worktree;
         if (!repo) {
+          // In a team floor's own folder, which isn't a checkout (git there would find whatever it's inside): one of its checkouts has to be named.
+          if (def.team && !wt) return undefined;
           const target = { name: w.name, cwd: wt ? path.join(def.dir, wt.path) : def.dir, rel: wt?.path ?? '', worktreeBase: wt?.base };
           // A worktree of one of a team floor's repositories: diffed against, and its PR opened against, the branch it was cut from.
           return wt?.checkout ? { ...target, baseBranch: wt.from ?? null, openPull: (branch: string) => openPull(this, branch, wt.repo) } : target;
@@ -341,7 +343,7 @@ export class Floor {
 
   /** Pull request `n` (in `repo`, on a team floor) merged (`by` someone, from the PR window): the gong rings, once per PR. */
   merged(n: number, by?: string, repo?: string) {
-    if (this.merges.ring(n, repo)) this.ctx.emit(this, { t: 'gong', why: 'merged', pr: n, by });
+    if (this.merges.ring(n, repo)) this.ctx.emit(this, { t: 'gong', why: 'merged', pr: n, by, ...(repo ? { repo } : {}) });
   }
 
   /**
@@ -351,11 +353,11 @@ export class Floor {
   reposChanged() {
     const { def } = this;
     if (!def.team) {
-      void this.github.set([{ dir: def.dir }]);
+      void this.github.set([{ dir: def.dir, home: def.repo }]);
       return;
     }
     const repos = def.repos ?? [];
-    for (const r of repos) if (!this.branches.has(r.path)) this.branches.set(r.path, projectInfo(path.join(def.dir, r.path), r.repo, this.ctx.agentCmd, []).branch);
+    for (const r of repos) if (!this.branches.has(r.path)) this.branches.set(r.path, new Worktrees(path.join(def.dir, r.path)).currentBranch());
     void this.github.set(repos.map((r): BoardSource => ({ repo: r.repo, dir: path.join(def.dir, r.path) })));
     writeTeamBrief(def.dir, def.name, repos, this.ctx.prompts);
   }

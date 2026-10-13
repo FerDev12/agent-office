@@ -1,4 +1,5 @@
 import type { ServerMsg } from '../../../shared/protocol';
+import { ghKey } from '../../../shared/floors';
 import { store } from '../../state';
 
 // Talking to the office about GitHub: the reads (over HTTP, for the floor you're on), and the
@@ -16,7 +17,7 @@ export function inRepo(url: string, repo: string | undefined): string {
 
 /** What a dialog waiting on the office's answer about an issue or pull request is filed under. */
 export function waitKey(kind: 'issue' | 'pull', n: number, repo?: string): string {
-  return `${kind}:${repo?.toLowerCase() ?? ''}#${n}`;
+  return `${kind}:${ghKey(n, repo)}`;
 }
 
 export async function getJson<T>(url: string): Promise<T> {

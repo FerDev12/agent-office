@@ -8,7 +8,7 @@ import { confirmDialog } from './prompt';
 import { providerPicker } from './provider';
 import { officePrompt } from './prompts';
 import { issueVars, withRepo } from './github/prompts';
-import { ghRef, sameGh } from '../../shared/floors';
+import { ghKey, ghRef, sameGh } from '../../shared/floors';
 import { dictateField } from './dictate';
 
 /** What a meeting called from an issue, a PR or a task starts out with. */
@@ -161,7 +161,6 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
   // Each option is "<owner/name>#<n>" (no repository on a project's floor), as team floors repeat numbers.
   const pr = () => Number(prSel.value.slice(prSel.value.lastIndexOf('#') + 1)) || undefined;
   const prRepo = () => prSel.value.slice(0, Math.max(0, prSel.value.lastIndexOf('#'))) || undefined;
-  const prKey = (n: number, repo?: string) => `${repo ?? ''}#${n}`;
   const syncOutput = () => {
     if (!outputTouched) outputIn.value = def().output(slug(), pr());
     const problem = outputProblem(outputIn.value.trim());
@@ -281,9 +280,9 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
   /** Keeps what depends on the board and the room up to date: the open PRs, and whether the room is free. */
   const refresh = () => {
     const open = store.pulls.items.filter((p) => p.state === 'OPEN');
-    const want = prSel.value || (preset?.pr ? prKey(preset.pr, preset.repo) : '');
-    const opts: (readonly [string, string])[] = open.map((p) => [prKey(p.number, p.repo), `${ghRef(p.number, p.repo)} ${p.title}`] as const);
-    if (preset?.pr && !open.some((p) => sameGh(p, preset.pr!, preset.repo))) opts.unshift([prKey(preset.pr, preset.repo), ghRef(preset.pr, preset.repo)]);
+    const want = prSel.value || (preset?.pr ? ghKey(preset.pr, preset.repo) : '');
+    const opts: (readonly [string, string])[] = open.map((p) => [ghKey(p.number, p.repo), `${ghRef(p.number, p.repo)} ${p.title}`] as const);
+    if (preset?.pr && !open.some((p) => sameGh(p, preset.pr!, preset.repo))) opts.unshift([ghKey(preset.pr, preset.repo), ghRef(preset.pr, preset.repo)]);
     const key = JSON.stringify(opts);
     if (prSel.dataset.key !== key) {
       prSel.dataset.key = key;
@@ -297,7 +296,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
     submit.toggleAttribute('disabled', taken);
   };
   pickPattern(pattern);
-  if (preset?.pr) prSel.value = prKey(preset.pr, preset.repo);
+  if (preset?.pr) prSel.value = ghKey(preset.pr, preset.repo);
   refresh();
   setTimeout(() => (preset?.prompt ? titleIn : about).focus(), 0);
   return { body: bodyEl, foot: [h('span.grow', {}, 'Few rounds and a file at the end: that’s what keeps meetings cheap.'), cancel, submit], refresh };

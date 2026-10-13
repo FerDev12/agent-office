@@ -1,6 +1,6 @@
 import './team-floor.css';
 import type { FloorInfo, FloorRepo, RepoChoice, ServerMsg } from '../../shared/protocol';
-import { cloneLabel, normalizeRepo, repoName, sameRepo } from '../../shared/floors';
+import { cloneLabel, normalizeRepo, sameRepo } from '../../shared/floors';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, timeAgo, toast, type Modal } from './dom';
@@ -26,13 +26,6 @@ export function routeTeamFloorMessage(msg: ServerMsg) {
   if (msg.t !== 'floor.created') return;
   if (created) created(msg);
   else if (msg.error) toast(`🛗 ${msg.error}`, 'warn');
-}
-
-/** A team floor's repositories in a few words, for the elevator: "api · web · docs", or what it has instead. */
-export function teamLine(f: FloorInfo): string {
-  const repos = f.repos ?? [];
-  if (!repos.length) return '🏢 Team floor · no repositories yet';
-  return `🏢 ${repos.map((r) => `${repoName(r.repo)}${r.cloning ? ' ⏳' : ''}`).join(' · ')}`;
 }
 
 /** Asks the office for the repositories its gh can see, unless it did a moment ago. */
@@ -236,7 +229,8 @@ export function openTeamRepos(net: Net, floorId: string) {
               'div.team-repo',
               {},
               h('span.floor-text', {}, h('span.floor-name', {}, r.repo), h('span.floor-sub', {}, r.cloning ? `${cloneLabel(r.clone)}${r.clone?.detail ? ` · ${r.clone.detail}` : ''}` : `📁 ${r.path}/`)),
-              store.me.admin ? h('button.btn.floor-off', { type: 'button', title: r.cloning ? `Stop cloning ${r.repo}` : `Take ${r.repo} off ${f.name}`, 'aria-label': r.cloning ? `Stop cloning ${r.repo}` : `Remove ${r.repo}`, onclick: () => remove(f, r) }, r.cloning ? '⏹️' : '🗑') : null,
+              // A clone on its way: whoever added it can stop it too (the office says if it's not them).
+              store.me.admin || r.cloning ? h('button.btn.floor-off', { type: 'button', title: r.cloning ? `Stop cloning ${r.repo}` : `Take ${r.repo} off ${f.name}`, 'aria-label': r.cloning ? `Stop cloning ${r.repo}` : `Remove ${r.repo}`, onclick: () => remove(f, r) }, r.cloning ? '⏹️' : '🗑') : null,
             ),
           )
         : [h('p.empty', {}, 'No repositories yet: its workers work in its own folder.')]),

@@ -47,9 +47,14 @@ export const workerHandlers = {
       ctx.toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${issue ? ` for issue ${ghRef(issue, issueRepo)}` : r.prompt ? ' with a task' : ''}${across}`);
       if (issue) ctx.takeIssue(c, floor, issue, issueRepo);
     };
+    // On a team floor, only the checkouts it gets worktrees of need fetching (all of them, when it names none there).
+    const checkoutsOn = (f: Floor) => {
+      const dirs = repos.filter((x) => x.floor === f.id).map((x) => x.dir);
+      return dirs.length ? dirs : undefined;
+    };
     // Every project it gets a worktree of starts from what's on GitHub.
     const fresh = [floor, ...repos.flatMap((x) => (x.floor === floor.id ? [] : [ctx.floors.get(x.floor)!]))];
-    ctx.withSignIn(c, kind === 'agent' ? ctx.claudeFor(msg.provider ?? floor.workers.officeDefault.provider) : undefined, () => (msg.worktree === true ? ctx.withFreshBase(c, fresh, hire) : hire()));
+    ctx.withSignIn(c, kind === 'agent' ? ctx.claudeFor(msg.provider ?? floor.workers.officeDefault.provider) : undefined, () => (msg.worktree === true ? ctx.withFreshBase(c, fresh, hire, checkoutsOn) : hire()));
   },
   'worker.resume'(ctx, c, msg) {
     const w = workerOf(ctx, msg.workerId);

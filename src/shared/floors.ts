@@ -106,3 +106,23 @@ export function repoOfUrl(url: string | undefined): string | undefined {
 export function sameGh(item: { number: number; repo?: string }, number: number, repo?: string): boolean {
   return item.number === number && (!item.repo || !repo || sameRepo(item.repo, repo));
 }
+
+/** An issue or pull request as a key ("#12", or "acme/api#12" lower-cased on a team floor, where numbers repeat). */
+export function ghKey(n: number, repo?: string): string {
+  return `${repo?.toLowerCase() ?? ''}#${n}`;
+}
+
+/**
+ * Whether a pull request on a floor's board is `ref` (a worker's, say): by its URL on a team floor,
+ * whose repositories repeat numbers, else by its number.
+ */
+export function isPull(p: { number: number; url: string; repo?: string }, ref: { number: number; url?: string }): boolean {
+  return p.repo && ref.url ? p.url.toLowerCase() === ref.url.toLowerCase() : p.number === ref.number;
+}
+
+/** A team floor's repositories in a few words, for the floor lists: "🏢 api · web", or that it has none. */
+export function teamLine(f: { repos?: { repo: string; cloning?: boolean }[] }): string {
+  const repos = f.repos ?? [];
+  if (!repos.length) return '🏢 Team floor · no repositories yet';
+  return `🏢 ${repos.map((r) => `${repoName(r.repo)}${r.cloning ? ' ⏳' : ''}`).join(' · ')}`;
+}

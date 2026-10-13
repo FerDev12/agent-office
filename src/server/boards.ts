@@ -9,6 +9,8 @@ import type { GhAs } from './signins.js';
 export interface BoardSource {
   /** owner/name, for a team floor's repository: its cards say so, and actions on them name it. */
   repo?: string;
+  /** owner/name of a project's own checkout, when it's on GitHub: an action naming another repository isn't for it. */
+  home?: string;
   dir: string;
 }
 
@@ -26,6 +28,8 @@ export class Boards {
   pulls: GhState<GhPull> = EMPTY();
   /** By repository (lower-cased owner/name; '' for a project's own checkout), in the order they came. */
   private boards = new Map<string, GitHub>();
+  /** The project's own repository, on a project's floor (see BoardSource.home). */
+  private home?: string;
 
   constructor(
     private onIssues: (s: GhState<GhIssue>) => void,
@@ -38,6 +42,7 @@ export class Boards {
    * once the new ones have been asked about.
    */
   set(sources: BoardSource[]): Promise<void> {
+    this.home = sources.find((s) => !s.repo)?.home;
     const keep = new Set(sources.map((s) => key(s.repo)));
     for (const [k, board] of this.boards) {
       if (keep.has(k)) continue;
@@ -69,7 +74,7 @@ export class Boards {
     const all = [...this.boards.values()];
     if (!all.length) return "This floor has no repositories on GitHub — add one from the elevator";
     if (!repo) return all.length === 1 ? all[0] : 'Say which repository: this floor has several';
-    return all.find((b) => !b.repo || sameRepo(b.repo, repo)) ?? `${repo} isn't one of this floor's repositories`;
+    return all.find((b) => (b.repo ? sameRepo(b.repo, repo) : !this.home || sameRepo(this.home, repo))) ?? `${repo} isn't ${all.length === 1 && !all[0].repo ? "this floor's repository" : "one of this floor's repositories"}`;
   }
 
   async refresh() {

@@ -17,6 +17,7 @@ import type { Parts } from '../../core/parts';
 import { STATION_INFO } from '../../core/stations';
 import { askNotifyPermission, notifyPermission } from '../../notify';
 import { canWorktree, repoChoices } from '../../shared/hiring';
+import { isPull } from '../../../shared/floors';
 import { store } from '../../state';
 import { openAsk } from '../../ui/ask';
 import { STATUS_LABEL, clip, closeAllModals, h, toast } from '../../ui/dom';
@@ -284,9 +285,9 @@ export function installWorkerActions(ctx: Ctx, core: CoreState, parts: WorkerAct
     });
   }
 
-  /** A pull request on the floor's board, by its URL (on a team floor, numbers repeat across its repositories). */
+  /** A pull request on the floor's board (see isPull). */
   function boardPull(pr: { number: number; url: string }) {
-    return store.pulls.items.find((p) => (p.repo ? p.url.toLowerCase() === pr.url.toLowerCase() : p.number === pr.number));
+    return store.pulls.items.find((p) => isPull(p, pr));
   }
 
   /** Puts you in front of a desk, looking at it: the PR board's "Go to desk". */

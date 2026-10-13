@@ -32,7 +32,7 @@ export const meetingHandlers = {
       model: msg.model === undefined ? undefined : str(msg.model, OPEN_CODE_MODEL_MAX + 1),
       effort: isAgentEffort(msg.effort) ? msg.effort : undefined,
     };
-    ctx.withSignIn(c, ctx.claudeFor(request.provider ?? floor.workers.officeDefault.provider), () => ctx.withFreshBase(c, floor, () => ctx.warn(c, floor.meetings.start(request, who, c.accountId))));
+    ctx.withSignIn(c, ctx.claudeFor(request.provider ?? floor.workers.officeDefault.provider), () => ctx.withFreshBase(c, floor, () => ctx.warn(c, floor.meetings.start(request, who, c.accountId)), () => []));
   },
   'meeting.stop'(ctx, c) {
     const who = c.peer.name;

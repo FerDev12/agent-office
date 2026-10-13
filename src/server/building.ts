@@ -380,11 +380,11 @@ export class Building {
     return typeof r === 'string' ? r : { def, repo: r };
   }
 
-  /** Takes a repository off the team floor `id`, or stops its clone (see TeamRepos.remove). */
-  removeRepo(id: string, repo: string, by: string): { def: FloorDef; repo: FloorRepoDef; stopping?: true } | string {
+  /** Takes a repository off the team floor `id` (admins), or stops its clone (see TeamRepos.remove). */
+  removeRepo(id: string, repo: string, by: string, admin = true, may: (owner: string | undefined) => boolean = () => false): { def: FloorDef; repo: FloorRepoDef; stopping?: true } | string {
     const def = this.defs.find((d) => d.id === id);
     if (!def?.team) return def ? `${def.name} isn't a team floor` : 'No such floor';
-    const r = this.team.remove(def, repo, by, () => this.save());
+    const r = this.team.remove(def, repo, by, () => this.save(), admin, may);
     return typeof r === 'string' ? r : { def, ...r };
   }
 

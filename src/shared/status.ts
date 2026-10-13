@@ -43,7 +43,8 @@ export function workerPr(w: WorkerInfo, pulls: GhPull[], tasks: QueueTask[]): Wo
   const inHome = (p: GhPull) => !p.repo || !home || sameRepo(p.repo, home);
   const refs: { number: number; url?: string }[] = [];
   if (w.pr) refs.push(w.pr);
-  for (const n of w.pastPrs ?? []) refs.push({ number: n });
+  // By URL, or (saved before team floors) by number in its own floor's repository.
+  for (const p of w.pastPrs ?? []) refs.push(typeof p === 'string' ? { number: Number(/\/pull\/(\d+)/.exec(p)?.[1]), url: p } : { number: p });
   const ownTasks = tasks.filter((t) => t.workerId === w.id && t.pr);
   for (const t of ownTasks) refs.push(t.pr!);
   const isRef = (p: GhPull, r: { number: number; url?: string }) => {

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import type { GhCheck, GhCloseReason, GhComment, GhIssue, GhIssueDetail, GhLabel, GhMergeMethod, GhPull, GhPullDetail, GhRepoInfo, GhReviewComment, GhState } from '../shared/protocol.js';
-import { repoOfUrl, sameRepo } from '../shared/floors.js';
+import { ghKey, repoOfUrl, sameRepo } from '../shared/floors.js';
 import type { GhAs } from './signins.js';
 
 const REFRESH_MS = 90_000;
@@ -114,7 +114,7 @@ export class MergeWatch {
 
   /** The gong rings for `n` (in `repo`, on a team floor): false if it already has. */
   ring(n: number, repo?: string): boolean {
-    const key = pullKey(n, repo);
+    const key = ghKey(n, repo);
     if (this.rang.has(key)) return false;
     this.rang.add(key);
     return true;
@@ -123,18 +123,14 @@ export class MergeWatch {
   /** A fresh list from GitHub: the pull requests that merged since the last look and haven't rung yet. */
   look(pulls: GhPull[]): GhPull[] {
     const open = this.open;
-    const merged = open ? pulls.filter((p) => p.state === 'MERGED' && open.has(pullKey(p.number, p.repo)) && !this.rang.has(pullKey(p.number, p.repo))) : [];
+    const merged = open ? pulls.filter((p) => p.state === 'MERGED' && open.has(ghKey(p.number, p.repo)) && !this.rang.has(ghKey(p.number, p.repo))) : [];
     // Once GitHub says it merged, it never shows as open again to ring twice.
-    for (const p of pulls) if (p.state === 'MERGED') this.rang.delete(pullKey(p.number, p.repo));
-    this.open = new Set(pulls.filter((p) => p.state === 'OPEN').map((p) => pullKey(p.number, p.repo)));
+    for (const p of pulls) if (p.state === 'MERGED') this.rang.delete(ghKey(p.number, p.repo));
+    this.open = new Set(pulls.filter((p) => p.state === 'OPEN').map((p) => ghKey(p.number, p.repo)));
     return merged;
   }
 }
 
-/** A pull request's number, with its repository's name on a team floor, where two can share one. */
-function pullKey(n: number, repo?: string): string {
-  return `${repo?.toLowerCase() ?? ''}#${n}`;
-}
 
 /**
  * The issues workers just took. Assigning one on GitHub and listing the issues again takes seconds,

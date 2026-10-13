@@ -67,7 +67,7 @@ export function parseArgs(argv) {
  * @returns {{ issue: number, repo?: string }}
  */
 export function issueArg(value) {
-  const m = /^(?:([\w.-]+\/[\w.-]+))?#?(\d+)$/.exec(String(value).trim());
+  const m = /^(?:([\w.-]+\/[\w.-]+)#|#)?(\d+)$/.exec(String(value).trim());
   if (!m || Number(m[2]) < 1) throw new UsageError(`--issue takes an issue number, e.g. --issue 12, or owner/name#12 on a team floor (got ${value})`);
   return { issue: Number(m[2]), ...(m[1] ? { repo: m[1] } : {}) };
 }

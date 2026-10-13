@@ -129,18 +129,21 @@ export class TeamRepos {
   /**
    * Takes `input` off the team floor `def` (and `save`s), or stops its clone (`stopping`: whoever added
    * it hears once it has). Its checkout stays in the floor's folder: adding it again moves back in.
+   * Only admins take one off; `may` says whether whoever's asking can stop a clone `owner` started.
    * Returns it, or why it can't.
    */
-  remove(def: FloorDef, input: string, by: string, save: () => void): { repo: FloorRepoDef; stopping?: true } | string {
+  remove(def: FloorDef, input: string, by: string, save: () => void, admin: boolean, may: (owner: string | undefined) => boolean): { repo: FloorRepoDef; stopping?: true } | string {
     const repo = normalizeRepo(input);
     const on = repo && def.repos?.find((r) => sameRepo(r.repo, repo));
     if (on) {
+      if (!admin) return 'Only admins can take a repository off a floor';
       def.repos = def.repos!.filter((r) => r !== on);
       save();
       return { repo: on };
     }
     const p = repo && this.pending.get(key(def.id, repo));
     if (!p) return `${input} isn't one of ${def.name}'s repositories`;
+    if (!admin && !may(p.owner)) return 'Only admins, or whoever added it, can stop a repository on its way';
     if (!p.run) return "There's no clone to stop yet — try again in a moment";
     p.run.stop(`${by} stopped the clone`);
     return { repo: p.def, stopping: true };

@@ -169,7 +169,7 @@ export interface Gates {
    * Worktrees.fetch): right away when that was just fetched, else after a fetch, if `c` and the floor
    * are still there.
    */
-  withFreshBase(c: Client, floor: Floor | Floor[], go: () => void): void;
+  withFreshBase(c: Client, floor: Floor | Floor[], go: () => void, dirs?: (f: Floor) => string[] | undefined): void;
   /** Runs `go` with how the office acts on GitHub for `c`: as them, or as itself (no account, or an admin's choice). */
   withGitHub(c: Client, go: (as: GhAs | undefined) => void, refused?: (why: string) => void): void;
   /** Needs a Claude sign-in of its own when the worker it starts runs Claude. */

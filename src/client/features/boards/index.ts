@@ -18,6 +18,7 @@ import { BoardTexture, QueueBoardTexture, ServicesBoardTexture } from './world';
 import { MachineTexture } from './machine';
 import { MeetingBoardTexture, MeetingSignTexture } from './meeting';
 import type { World } from '../../world/world';
+import { ghKey } from '../../../shared/floors';
 
 // The kinds of thing you can use that this defines (see InteractKinds in world/types.ts).
 declare module '../../world/types' {
@@ -59,15 +60,15 @@ export function installBoards(ctx: Ctx, deps: BoardsDeps) {
   function offBoard(): Set<string> {
     const off = new Set<string>();
     const carrying = ctx.carrying();
-    if (carrying) off.add(cardKey(carrying.issue, carrying.repo));
-    for (const p of store.peers.values()) if (p.carrying && p.id !== store.you && store.onMyFloor(p)) off.add(cardKey(p.carrying.issue, p.carrying.repo));
+    if (carrying) off.add(ghKey(carrying.issue, carrying.repo));
+    for (const p of store.peers.values()) if (p.carrying && p.id !== store.you && store.onMyFloor(p)) off.add(ghKey(p.carrying.issue, p.carrying.repo));
     return off;
   }
   const issuesTex = new BoardTexture('issues');
   // The cork holds the issues nobody has started on: one that's in progress comes off it, as a closed one does.
   const renderIssuesBoard = () => {
     const off = offBoard();
-    issuesTex.render({ ...store.issues, items: store.issues.items.filter((i) => !off.has(cardKey(i.number, i.repo)) && !inProgress(i, store.taskForIssue(i.number, i.repo))) });
+    issuesTex.render({ ...store.issues, items: store.issues.items.filter((i) => !off.has(ghKey(i.number, i.repo)) && !inProgress(i, store.taskForIssue(i.number, i.repo))) });
   };
   // The queue too: a task that starts running takes its issue off the board before GitHub says it's assigned.
   mountBoard(office.boardMeshes.issues, issuesTex.texture, renderIssuesBoard, ['issues', 'queue']);
@@ -151,9 +152,4 @@ export function installBoards(ctx: Ctx, deps: BoardsDeps) {
   }
 
   return { issuesTex, renderPullsBoard, renderServicesBoard, renderQueueBoard, dressBoards, cardMoved };
-}
-
-/** An issue's card, by its number and, on a team floor, its repository. */
-function cardKey(n: number, repo?: string): string {
-  return `${repo?.toLowerCase() ?? ''}#${n}`;
 }

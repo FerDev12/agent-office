@@ -131,7 +131,7 @@ export function parseArgs(argv) {
       out.effort = opts['--effort'];
     }
     if (opts['--issue'] !== undefined) {
-      const m = /^(?:([\w.-]+\/[\w.-]+))?#?(\d+)$/.exec(String(opts['--issue']).trim());
+      const m = /^(?:([\w.-]+\/[\w.-]+)#|#)?(\d+)$/.exec(String(opts['--issue']).trim());
       if (!m || Number(m[2]) < 1) throw new UsageError(`--issue takes an issue number, e.g. --issue 12, or owner/name#12 on a team floor (got ${opts['--issue']})`);
       out.issue = Number(m[2]);
       if (m[1]) out.repo = m[1];

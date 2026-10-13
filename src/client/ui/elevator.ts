@@ -1,12 +1,12 @@
 import './elevator.css';
 import type { CloneProgress, FloorInfo, RepoChoice, ServerMsg } from '../../shared/protocol';
-import { cloneLabel, cloneStep, floorPalette, normalizeRepo, sameRepo } from '../../shared/floors';
+import { cloneLabel, cloneStep, floorPalette, normalizeRepo, sameRepo, teamLine } from '../../shared/floors';
 import { ROOF, ROOF_NAME } from '../../shared/rooftop';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, timeAgo, toast, type Modal } from './dom';
 import { confirmDialog } from './prompt';
-import { openNewTeamFloor, openTeamRepos, routeTeamFloorMessage, teamLine } from './team-floor';
+import { openNewTeamFloor, openTeamRepos, routeTeamFloorMessage } from './team-floor';
 
 // The elevator's panel: a button for every floor (every project), and "add a project", which clones
 // one of the repositories the office's gh login can see and makes it a new floor, or a team floor,
