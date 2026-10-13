@@ -94,8 +94,9 @@ export function onWall(side: Side, u: number): { x: number; z: number; rotY: num
   }
 }
 
-/** Chunky planks in a floor's colors. */
+/** Chunky planks in a floor's colors, or polished concrete for a theme laid with it. */
 export function paintPlanks(c: HTMLCanvasElement, p: FloorPalette) {
+  if (p.surface === 'concrete') return paintConcrete(c, p);
   const g = c.getContext('2d')!;
   g.fillStyle = p.floor;
   g.fillRect(0, 0, 512, 512);
@@ -109,6 +110,46 @@ export function paintPlanks(c: HTMLCanvasElement, p: FloorPalette) {
     g.fillStyle = p.seam;
     g.fillRect(0, row * 64, 512, 3);
   }
+}
+
+/**
+ * Polished concrete in a floor's colors: soft clouds of its two tones, a fine speckle, and a saw cut
+ * between slabs every 3 m. Seeded, so it's the same floor in every browser.
+ */
+function paintConcrete(c: HTMLCanvasElement, p: FloorPalette) {
+  const g = c.getContext('2d')!;
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+  g.fillStyle = p.floor;
+  g.fillRect(0, 0, 512, 512);
+  // Clouds, drawn again a tile over at the edges so the texture repeats without a seam.
+  for (let i = 0; i < 70; i++) {
+    const x = rnd() * 512;
+    const y = rnd() * 512;
+    const r = 30 + rnd() * 90;
+    const tone = rnd() < 0.5 ? p.floorAlt : '#ffffff';
+    for (const dx of [-512, 0, 512])
+      for (const dy of [-512, 0, 512]) {
+        const blot = g.createRadialGradient(x + dx, y + dy, 0, x + dx, y + dy, r);
+        blot.addColorStop(0, tone);
+        blot.addColorStop(1, 'transparent');
+        g.globalAlpha = tone === '#ffffff' ? 0.05 : 0.22;
+        g.fillStyle = blot;
+        g.fillRect(x + dx - r, y + dy - r, r * 2, r * 2);
+      }
+  }
+  for (let i = 0; i < 1400; i++) {
+    g.globalAlpha = 0.12 + rnd() * 0.2;
+    g.fillStyle = rnd() < 0.5 ? p.seam : '#ffffff';
+    g.fillRect(rnd() * 512, rnd() * 512, 1 + rnd() * 1.5, 1 + rnd() * 1.5);
+  }
+  g.globalAlpha = 0.7;
+  g.fillStyle = p.seam;
+  g.fillRect(0, 0, 512, 2);
+  g.fillRect(0, 256, 512, 2);
+  g.fillRect(0, 0, 2, 512);
+  g.fillRect(256, 0, 2, 512);
+  g.globalAlpha = 1;
 }
 
 export function floorTexture(width = FLOOR.maxX - FLOOR.minX, depth = FLOOR.maxZ - FLOOR.minZ): THREE.CanvasTexture {

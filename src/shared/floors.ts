@@ -6,18 +6,28 @@ import type { CloneProgress } from './protocol.js';
 /** The most floors a building has. */
 export const MAX_FLOORS = 16;
 
-/** How a floor looks: its walls, their trim, and its planks. */
+/** How a floor looks (its theme): its walls, their trim, and its planks. */
 export interface FloorPalette {
   name: string;
   wall: string;
   trim: string;
   floor: string;
   floorAlt: string;
-  /** The gaps between planks. */
+  /** The gaps between planks (or between a concrete floor's slabs). */
   seam: string;
+  /** What the floor is laid with: planks, unless it says otherwise. */
+  surface?: 'planks' | 'concrete';
+  /** A brand's own dressing, put up on the office floor while it's painted in this (see features/floortheme). */
+  brand?: 'vtwo';
+  /** Never handed out to a new floor by itself: an admin picks it from ☰ → Floor theme. */
+  pickOnly?: boolean;
 }
 
-/** The first is the office as it always looked; every new floor takes the next one nobody has. */
+/**
+ * The themes a floor can be painted in, by index (floors.json keeps the index, so only add to the end).
+ * The first is the office as it always looked; every new floor takes the next one nobody has, of those
+ * that aren't `pickOnly`.
+ */
 export const FLOOR_PALETTES: FloorPalette[] = [
   { name: 'Maple', wall: '#fff6ea', trim: '#e8a87c', floor: '#f2d7b0', floorAlt: '#e9c89a', seam: '#d9b88c' },
   { name: 'Mint', wall: '#e3f6ec', trim: '#40a878', floor: '#cfe6d9', floorAlt: '#bcdcc9', seam: '#9fc6b0' },
@@ -29,7 +39,17 @@ export const FLOOR_PALETTES: FloorPalette[] = [
   { name: 'Slate', wall: '#edf1f5', trim: '#3d5a80', floor: '#b9c3cd', floorAlt: '#aab5c0', seam: '#8d99a6' },
   { name: 'Rose', wall: '#ffeaf0', trim: '#e0567f', floor: '#eed3da', floorAlt: '#e4c1cb', seam: '#cea5b2' },
   { name: 'Teal', wall: '#e1f7f6', trim: '#1a9a9a', floor: '#c3e2de', floorAlt: '#b0d7d2', seam: '#92c3bd' },
+  // Raw concrete, black trim and polished concrete underfoot, with VTwo's lit V and purple light.
+  { name: 'VTwo', wall: '#8a8c90', trim: '#1c1b20', floor: '#959596', floorAlt: '#8a8a8c', seam: '#77777a', surface: 'concrete', brand: 'vtwo', pickOnly: true },
 ];
+
+/** The themes a new floor can be handed by itself, by index into FLOOR_PALETTES. */
+export const AUTO_PALETTES: readonly number[] = FLOOR_PALETTES.flatMap((p, i) => (p.pickOnly ? [] : [i]));
+
+/** Whether `v` names one of FLOOR_PALETTES. */
+export function isPalette(v: unknown): v is number {
+  return Number.isInteger(v) && (v as number) >= 0 && (v as number) < FLOOR_PALETTES.length;
+}
 
 export function floorPalette(i: number): FloorPalette {
   return FLOOR_PALETTES[((i % FLOOR_PALETTES.length) + FLOOR_PALETTES.length) % FLOOR_PALETTES.length];

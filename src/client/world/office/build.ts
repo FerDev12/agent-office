@@ -11,6 +11,7 @@ import { jukebox } from '../../features/jukebox/world';
 import { bookshelf } from '../../features/bookshelf/world';
 import { cabinet } from '../../features/cabinet/world';
 import { whiteboard } from '../../features/whiteboard/world';
+import { vtwo } from '../../features/floortheme/world';
 import { green, tee } from '../../features/golf/world';
 import { stack } from '../stack';
 import { tower } from '../tower';
@@ -71,6 +72,8 @@ function floorPlan() {
     gong,
     hoop,
     whiteboard,
+    // A theme's own dressing, up while the floor's painted in it.
+    vtwo,
     clearOfStairs,
   ] as const;
 }
@@ -83,7 +86,7 @@ export function buildOffice(): Office {
   const group = new THREE.Group();
   const colliders: Collider[] = [];
   const interactables: Interactable[] = [];
-  const walls: WallRect[] = [];
+  const walls: { rect: WallRect; when?: () => boolean }[] = [];
   // What each floor paints its own way (see setLook): the walls, their trim, the planks.
   const looks: Looks = { wall: toonUnique(PALETTE.wall), trim: toonUnique(PALETTE.wallTrim), planks: [] };
   // The floor's planks, which the stack lays the floor with (and the back office its own).
@@ -98,7 +101,7 @@ export function buildOffice(): Office {
     group,
     colliders,
     interactables,
-    wall: (wall, u, y, w, h) => void walls.push({ wall, u0: u - w / 2, u1: u + w / 2, y0: y - h / 2, y1: y + h / 2 }),
+    wall: (wall, u, y, w, h, when) => void walls.push({ rect: { wall, u0: u - w / 2, u1: u + w / 2, y0: y - h / 2, y1: y + h / 2 }, when }),
     looks,
     planks,
     desks,
@@ -113,6 +116,7 @@ export function buildOffice(): Office {
   // Each fixture in turn, with what it hands back.
   const updates: ((t: number, dt: number) => void)[] = [];
   const levels: ((index: number, count: number, wings: readonly number[]) => void)[] = [];
+  const lookers: ((p: FloorPalette) => void)[] = [];
   const plan: readonly Fixture[] = floorPlan();
   for (const fixture of plan) {
     const built = fixture(site);
@@ -125,6 +129,7 @@ export function buildOffice(): Office {
     }
     if (built.update) updates.push(built.update);
     if (built.setLevel) levels.push(built.setLevel);
+    if (built.setLook) lookers.push(built.setLook);
   }
 
   const setLook = (p: FloorPalette) => {
@@ -134,6 +139,7 @@ export function buildOffice(): Office {
       paintPlanks(t.image as HTMLCanvasElement, p);
       t.needsUpdate = true;
     }
+    for (const look of lookers) look(p);
   };
 
   const setLevel = (index: number, count: number, wings: readonly number[] = []) => {
@@ -159,5 +165,5 @@ export function buildOffice(): Office {
     for (const u of updates) u(t, dt);
   };
 
-  return { ...(given as OfficeHandles), group, colliders, interactables, desks, fixtures: () => walls, setLook, setLevel, update };
+  return { ...(given as OfficeHandles), group, colliders, interactables, desks, fixtures: () => walls.filter((w) => w.when?.() ?? true).map((w) => w.rect), setLook, setLevel, update };
 }

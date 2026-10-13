@@ -1,5 +1,6 @@
 import type * as THREE from 'three';
 import type { WallId } from '../../../shared/decor';
+import type { FloorPalette } from '../../../shared/floors';
 import type { Collider, DeskView, Interactable, OfficeHandles } from '../types';
 import type { Looks } from './materials';
 import type { Door } from './shell';
@@ -17,9 +18,10 @@ export interface Site {
   readonly interactables: Interactable[];
   /**
    * Marks a stretch of wall `w` wide and `h` high, centered `u` along it and `y` up, as taken (a board,
-   * a window, a door), so pictures don't hang over it (see Office.fixtures).
+   * a window, a door), so pictures don't hang over it (see Office.fixtures). With `when`, only while
+   * that says so (something only some floors' themes put up).
    */
-  wall(wall: WallId, u: number, y: number, w: number, h: number): void;
+  wall(wall: WallId, u: number, y: number, w: number, h: number, when?: () => boolean): void;
   /** What each floor paints its own way (see Office.setLook). */
   readonly looks: Looks;
   /** The floor's planks, which the back office's floor is laid with too. */
@@ -57,6 +59,8 @@ export interface Built<K extends keyof OfficeHandles = never> {
   update?(t: number, dt: number): void;
   /** You're on floor `index` of a building `count` floors tall (see Office.setLevel). */
   setLevel?(index: number, count: number, wings: readonly number[]): void;
+  /** The floor you're on is painted in theme `p` (see Office.setLook). */
+  setLook?(p: FloorPalette): void;
 }
 
 /** One part of the office floor: it builds itself into the site, and says what it gives the office. */
