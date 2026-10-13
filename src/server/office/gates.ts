@@ -2,21 +2,22 @@ import { WebSocket } from 'ws';
 import type { GhAs } from '../signins.js';
 import type { Floor } from '../floor.js';
 import type { SignInKind } from '../../shared/protocol.js';
+import { ghRef } from '../../shared/floors.js';
 import type { Ctx, Gates } from './context.js';
 import type { Client } from './client.js';
 
 /** What has to be true before something happens for someone: a sign-in of their own, a fresh base, GitHub. */
 export function gates(ctx: Ctx): Gates {
   /**
-   * A worker took on GitHub issue `n` (handed over from its window, or its card dropped on the desk):
+   * A worker took on GitHub issue `n` (in `repo`, on a team floor; handed over from its window, or its card dropped on the desk):
    * it moves to In progress on the board and is assigned on GitHub (see GitHub.claim), and comes off
    * the queue so nobody else is seated for it.
    */
-  const takeIssue = (c: Client, floor: Floor, n: number) => {
-    floor.queue.dropIssue(n);
+  const takeIssue = (c: Client, floor: Floor, n: number, repo?: string) => {
+    floor.queue.dropIssue(n, repo);
     const as = c.accountId ? ctx.signins.ghAs(c.accountId) : undefined;
-    if (typeof as === 'string') return ctx.warn(c, `Couldn't assign issue #${n} on GitHub: ${as}`);
-    void floor.github.claim(n, as).then((err) => ctx.warn(c, err && `Couldn't assign issue #${n} on GitHub: ${err}`));
+    if (typeof as === 'string') return ctx.warn(c, `Couldn't assign issue ${ghRef(n, repo)} on GitHub: ${as}`);
+    void floor.github.claim(n, as, repo).then((err) => ctx.warn(c, err && `Couldn't assign issue ${ghRef(n, repo)} on GitHub: ${err}`));
   };
 
   /**

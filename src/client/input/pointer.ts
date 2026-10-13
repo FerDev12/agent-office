@@ -119,7 +119,7 @@ export function installPointer(ctx: Ctx, core: CoreState, parts: PointerParts) {
   function noteUnder(aim: { it: Interactable; hit: THREE.Intersection } | null): GhIssue | null {
     if (aim?.it.kind !== 'issues' || aim.hit.object !== ctx.world().boardMeshes.issues || !aim.hit.uv) return null;
     const n = parts.boards.issuesTex.noteAt(aim.hit.uv);
-    return n === undefined ? null : (store.issues.items.find((i) => i.number === n) ?? null);
+    return n === undefined ? null : (store.issues.items.find((i) => i.number === n.number && i.repo === n.repo) ?? null);
   }
 
   canvas.addEventListener('pointermove', (e) => {
@@ -145,7 +145,7 @@ export function installPointer(ctx: Ctx, core: CoreState, parts: PointerParts) {
         if (aim?.near) aimedNote = noteUnder(aim);
       }
     }
-    parts.boards.issuesTex.lift(aimedNote?.number ?? null);
+    parts.boards.issuesTex.lift(aimedNote);
     parts.hintbar.renderHint();
     parts.hintbar.renderCrosshair();
   });

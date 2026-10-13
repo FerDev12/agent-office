@@ -16,7 +16,7 @@ export function floorHelpers(ctx: Ctx): FloorHelpers {
     return undefined;
   };
   const floorInfos = (): FloorInfo[] => [
-    ...[...ctx.floors.values()].map((f) => ({ ...f.info(), ...(ctx.building.isLocal(f.id) ? { local: true } : {}) })),
+    ...[...ctx.floors.values()].map((f) => ({ ...f.info(), ...(ctx.building.isLocal(f.id) ? { local: true } : {}), ...(f.def.team ? { repos: ctx.building.teamRepos(f.id) } : {}) })),
     ...ctx.building.pending().map((d) => ({ id: d.id, name: d.name, repo: d.repo, dir: d.dir, palette: d.palette, addedBy: d.addedBy, addedAt: d.addedAt, cloning: true, clone: ctx.building.cloneProgress(d.id), workers: 0, busy: 0, waiting: 0, people: 0, wing: 0 })),
   ];
   // The elevator's counts change with every worker update; tell everyone at most a few times a second.
@@ -150,6 +150,17 @@ export async function openFloors(ctx: Ctx, hookPort: number): Promise<FloorsOpen
     if (!openFloor(r)) return;
     console.log(`  the ${r.name} floor's clone finished (${r.dir})`);
     ctx.toastAll(`🛗 New floor: ${r.name}, added by ${r.addedBy}`);
+  });
+  // …and so do the repositories on their way into team floors.
+  ctx.building.resumeTeamClones((def, r) => {
+    ctx.floorsChanged();
+    if (typeof r === 'string') {
+      console.error(`agent-office: ${r}`);
+      return ctx.toastAll(`🛗 ${r}`, 'warn');
+    }
+    ctx.floors.get(def.id)?.reposChanged();
+    console.log(`  ${r.repo} finished cloning into the ${def.name} floor (${r.path})`);
+    ctx.toastAll(`🛗 ${r.repo} is on ${def.name} now, added by ${r.addedBy}`);
   });
   // Workers still running from the last office are back at their desks before anyone walks in.
   await Promise.all([...floors.values()].map((f) => f.ready));

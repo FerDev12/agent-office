@@ -1,6 +1,7 @@
 // People in the office: walking about, reaching for things, sitting, carrying issue cards, emotes,
 // their name and look, what they have open, voice and screen sharing, and chat.
 import type { ChatLine, PresenceClientMsg } from '../../../shared/protocol.js';
+import { normalizeRepo } from '../../../shared/floors.js';
 import { seatHereOn } from '../../../shared/maps/index.js';
 import { sanitizeLook } from '../../../shared/avatar.js';
 import { isEmote } from '../../../shared/emotes.js';
@@ -81,8 +82,9 @@ export const presenceHandlers = {
   carry(ctx, c, msg) {
     // Everyone on the floor sees the issue card in their hands, and whoever comes in later too.
     const issue = issueNumber(msg.issue);
-    if (issue === c.peer.carrying?.issue) return;
-    if (issue !== undefined) c.peer.carrying = { issue, title: str(msg.title, 200) };
+    const repo = issue === undefined ? undefined : normalizeRepo(msg.repo);
+    if (issue === c.peer.carrying?.issue && repo === c.peer.carrying?.repo) return;
+    if (issue !== undefined) c.peer.carrying = { issue, title: str(msg.title, 200), ...(repo ? { repo } : {}) };
     else delete c.peer.carrying;
     ctx.broadcast({ t: 'peer.update', peer: c.peer }, c.id);
   },

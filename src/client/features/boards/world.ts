@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { GhIssue, GhPull, GhState, QueueState, QueueTask, ServiceInfo, WorkerInfo } from '../../../shared/protocol';
 import { store, workerForPull } from '../../state';
+import { ghRef } from '../../../shared/floors';
 
 export const NOTE_COLORS = ['#fff7b0', '#ffd6e0', '#caffbf', '#bde0fe', '#ffe5b4'];
 export const PINS = ['#ef476f', '#118ab2', '#06d6a0', '#ffd166'];
@@ -25,6 +26,8 @@ export function wrap(ctx: CanvasRenderingContext2D, text: string, maxW: number, 
 /** A note as it was last drawn: its middle, size and tilt on the canvas. */
 interface DrawnNote {
   number: number;
+  /** Its repository, on a team floor (see GhIssue.repo). */
+  repo?: string;
   x: number;
   y: number;
   w: number;
@@ -39,7 +42,7 @@ export class BoardTexture {
   private ctx: CanvasRenderingContext2D;
   private notes: DrawnNote[] = [];
   /** The note being reached for, drawn lifted off the cork (see lift). */
-  private lifted: number | null = null;
+  private lifted: string | null = null;
   private last: [GhState<GhIssue> | GhState<GhPull>, Map<string, WorkerInfo> | undefined] | null = null;
 
   constructor(private kind: 'issues' | 'pulls') {
@@ -57,7 +60,7 @@ export class BoardTexture {
   }
 
   /** The note at a point on the board's face (its uv), or undefined over bare cork. */
-  noteAt(uv: THREE.Vector2): number | undefined {
+  noteAt(uv: THREE.Vector2): { number: number; repo?: string } | undefined {
     const px = uv.x * this.canvas.width;
     const py = (1 - uv.y) * this.canvas.height;
     // Topmost first: later notes are drawn over earlier ones.
@@ -68,15 +71,16 @@ export class BoardTexture {
       const dy = py - n.y;
       const c = Math.cos(-n.tilt);
       const s = Math.sin(-n.tilt);
-      if (Math.abs(dx * c - dy * s) <= n.w / 2 && Math.abs(dx * s + dy * c) <= n.h / 2) return n.number;
+      if (Math.abs(dx * c - dy * s) <= n.w / 2 && Math.abs(dx * s + dy * c) <= n.h / 2) return { number: n.number, repo: n.repo };
     }
     return undefined;
   }
 
   /** Draws one note lifted off the cork, the one you're about to take (null for none). */
-  lift(number: number | null) {
-    if (number === this.lifted) return;
-    this.lifted = number;
+  lift(note: { number: number; repo?: string } | null) {
+    const key = note && ghRef(note.number, note.repo);
+    if (key === this.lifted) return;
+    this.lifted = key;
     if (this.last) this.render(...this.last);
   }
 
@@ -128,8 +132,8 @@ export class BoardTexture {
       const x = gx + c * (nw + gx);
       const y = gy + r * (nh + gy);
       const tilt = ((it.number * 37) % 7 - 3) * 0.012;
-      this.notes.push({ number: it.number, x: x + nw / 2, y: y + nh / 2, w: nw, h: nh, tilt });
-      const lifted = it.number === this.lifted;
+      this.notes.push({ number: it.number, repo: it.repo, x: x + nw / 2, y: y + nh / 2, w: nw, h: nh, tilt });
+      const lifted = ghRef(it.number, it.repo) === this.lifted;
       g.save();
       g.translate(x + nw / 2, y + nh / 2);
       g.rotate(tilt);
@@ -150,7 +154,7 @@ export class BoardTexture {
       const w = this.kind === 'pulls' && workers ? workerForPull(workers.values(), it as GhPull) : undefined;
       const footer = w ? fs * 1.3 : 0;
       g.font = `900 ${Math.round(fs * 1.35)}px Nunito, ui-rounded, system-ui, sans-serif`;
-      g.fillText(`#${it.number}`, -nw / 2 + 14, -nh / 2 + fs * 2);
+      g.fillText(ghRef(it.number, it.repo), -nw / 2 + 14, -nh / 2 + fs * 2);
       g.font = `700 ${fs}px Nunito, ui-rounded, system-ui, sans-serif`;
       wrap(g, it.title, nw - 28, Math.max(2, Math.floor((nh - fs * 3 - footer) / (fs * 1.1)))).forEach((line, li) => g.fillText(line, -nw / 2 + 14, -nh / 2 + fs * 3.4 + li * fs * 1.1));
       if (w) {
@@ -288,7 +292,7 @@ export class QueueBoardTexture {
   }
 
   render(state: QueueState, workers: Map<string, WorkerInfo>) {
-    const name = (t: QueueTask) => (t.issue !== undefined ? `#${t.issue}  ${t.title.replace(new RegExp(`^#${t.issue}\\s*`), '')}` : t.title);
+    const name = (t: QueueTask) => (t.issue !== undefined ? `${ghRef(t.issue, t.repo)}  ${t.title.replace(/^\S*#\d+\s*/, '')}` : t.title);
     const running = state.tasks.filter((t) => t.status === 'running');
     const queued = state.tasks.filter((t) => t.status === 'queued');
     const done = state.tasks.filter((t) => t.status === 'done').slice(-3).reverse();

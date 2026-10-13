@@ -1,4 +1,5 @@
 // The issue and pull request windows: a PR or issue in full, its diff, and the repo's labels.
+import { normalizeRepo } from '../../../shared/floors.js';
 import { send } from '../util.js';
 import type { Route } from '../router.js';
 import { floorParam } from './files.js';
@@ -15,7 +16,9 @@ export const githubRoutes = {
       // The repo's labels (for the label picker) are the one thing not about a single issue or PR.
       if (p !== '/api/gh/labels' && (!Number.isSafeInteger(n) || n <= 0)) return send(res, 400, { error: 'Bad number' });
       if (!floor) return send(res, 404, { error: 'No such floor' });
-      const github = floor.github;
+      // On a team floor, the repository it's in (&repo=owner/name).
+      const github = floor.github.for(normalizeRepo(url.searchParams.get('repo')));
+      if (typeof github === 'string') return send(res, 404, { error: github });
       try {
         // "You" on comments is your own GitHub login once you've signed in to it.
         const me = session.account ? ctx.signins.githubLogin(session.account.id) : undefined;

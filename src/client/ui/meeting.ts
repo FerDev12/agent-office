@@ -7,7 +7,8 @@ import { h, openModal, timeAgo, toast, STATUS_LABEL, type Modal } from './dom';
 import { confirmDialog } from './prompt';
 import { providerPicker } from './provider';
 import { officePrompt } from './prompts';
-import { issueVars } from './github/prompts';
+import { issueVars, withRepo } from './github/prompts';
+import { ghRef, sameGh } from '../../shared/floors';
 import { dictateField } from './dictate';
 
 /** What a meeting called from an issue, a PR or a task starts out with. */
@@ -17,6 +18,8 @@ export interface MeetingPreset {
   title?: string;
   pr?: number;
   issue?: number;
+  /** The repository `pr` or `issue` is in, on a team floor. */
+  repo?: string;
 }
 
 export interface MeetingActions {
@@ -26,8 +29,8 @@ export interface MeetingActions {
 }
 
 /** A meeting about a GitHub issue: the form filled in with it. */
-export function issueMeeting(n: number, title: string): MeetingPreset {
-  return { issue: n, title: `#${n} ${title}`, prompt: officePrompt('issue.meeting', issueVars({ number: n, title })) };
+export function issueMeeting(n: number, title: string, repo?: string): MeetingPreset {
+  return { issue: n, repo, title: `${ghRef(n, repo)} ${title}`, prompt: withRepo(officePrompt('issue.meeting', issueVars({ number: n, title, repo })), repo) };
 }
 
 const PART_LABEL: Record<MeetingTurn['state'], string> = { waiting: '⏳ up next', sent: '📨 handed over', working: '💬 on it', done: '✅ written' };
@@ -155,7 +158,10 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
 
   const def = () => MEETING_PATTERNS[pattern];
   const slug = () => slugify(titleIn.value.trim() || about.value.trim().split('\n')[0] || 'meeting', 32);
-  const pr = () => Number(prSel.value) || undefined;
+  // Each option is "<owner/name>#<n>" (no repository on a project's floor), as team floors repeat numbers.
+  const pr = () => Number(prSel.value.slice(prSel.value.lastIndexOf('#') + 1)) || undefined;
+  const prRepo = () => prSel.value.slice(0, Math.max(0, prSel.value.lastIndexOf('#'))) || undefined;
+  const prKey = (n: number, repo?: string) => `${repo ?? ''}#${n}`;
   const syncOutput = () => {
     if (!outputTouched) outputIn.value = def().output(slug(), pr());
     const problem = outputProblem(outputIn.value.trim());
@@ -254,6 +260,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
       parts: def().needs === 'parts' ? parts : undefined,
       pr: def().needs === 'pr' ? pr() : undefined,
       issue: preset?.issue,
+      repo: def().needs === 'pr' ? prRepo() : preset?.repo,
       rounds: Number(roundsSel.value) || undefined,
       provider: provider.value(),
       model: provider.model(),
@@ -274,9 +281,9 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
   /** Keeps what depends on the board and the room up to date: the open PRs, and whether the room is free. */
   const refresh = () => {
     const open = store.pulls.items.filter((p) => p.state === 'OPEN');
-    const want = prSel.value || (preset?.pr ? String(preset.pr) : '');
-    const opts: (readonly [string, string])[] = open.map((p) => [String(p.number), `#${p.number} ${p.title}`] as const);
-    if (preset?.pr && !open.some((p) => p.number === preset.pr)) opts.unshift([String(preset.pr), `#${preset.pr}`]);
+    const want = prSel.value || (preset?.pr ? prKey(preset.pr, preset.repo) : '');
+    const opts: (readonly [string, string])[] = open.map((p) => [prKey(p.number, p.repo), `${ghRef(p.number, p.repo)} ${p.title}`] as const);
+    if (preset?.pr && !open.some((p) => sameGh(p, preset.pr!, preset.repo))) opts.unshift([prKey(preset.pr, preset.repo), ghRef(preset.pr, preset.repo)]);
     const key = JSON.stringify(opts);
     if (prSel.dataset.key !== key) {
       prSel.dataset.key = key;
@@ -290,7 +297,7 @@ function meetingForm(net: Net, preset: MeetingPreset | undefined, done: () => vo
     submit.toggleAttribute('disabled', taken);
   };
   pickPattern(pattern);
-  if (preset?.pr) prSel.value = String(preset.pr);
+  if (preset?.pr) prSel.value = prKey(preset.pr, preset.repo);
   refresh();
   setTimeout(() => (preset?.prompt ? titleIn : about).focus(), 0);
   return { body: bodyEl, foot: [h('span.grow', {}, 'Few rounds and a file at the end: that’s what keeps meetings cheap.'), cancel, submit], refresh };

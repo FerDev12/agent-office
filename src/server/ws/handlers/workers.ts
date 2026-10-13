@@ -1,8 +1,13 @@
 // Workers at their desks and the board agents at their kiosks: hiring them, their terminals, their
 // worktrees and pull requests.
+import path from 'node:path';
 import { MAX_REPOS, type RepoSource } from '../../workers.js';
 import { OPEN_CODE_MODEL_MAX } from '../../../shared/providers.js';
 import { isAgentEffort, isAgentProvider, type WorkerClientMsg } from '../../../shared/protocol.js';
+import { ghRef, normalizeRepo, parseTeamRepoKey, repoName } from '../../../shared/floors.js';
+import type { Ctx } from '../../office/context.js';
+import { MAX_TEAM_REPOS } from '../../team-floors.js';
+import type { Floor } from '../../floor.js';
 import { issueNumber, num, str } from '../../office/input.js';
 import { here, workerOf } from './common.js';
 import type { FeatureHooks, HandlerMap, ViewPieces } from './types.js';
@@ -27,24 +32,23 @@ export const workerHandlers = {
     }
     const model = msg.model === undefined ? undefined : str(msg.model, OPEN_CODE_MODEL_MAX + 1);
     const effort = isAgentEffort(msg.effort) ? msg.effort : undefined;
-    // Other floors' projects to work in too, each in a worktree of its own.
-    const repos: RepoSource[] = [];
-    for (const id of Array.isArray(msg.repos) ? [...new Set(msg.repos.slice(0, MAX_REPOS + 1).map((x) => str(x, 64)))] : []) {
-      const other = ctx.floors.get(id);
-      if (!other || other === floor) return ctx.warn(c, other ? "The worker's own floor's project is already in its workspace" : 'That project is no longer in the building');
-      repos.push({ floor: other.id, name: other.def.name, repo: other.def.repo, dir: other.dir });
-    }
+    // The repositories to work in, each in a worktree of its own.
+    // Its own team floor's repositories (up to MAX_TEAM_REPOS) and other projects (up to MAX_REPOS, which spawn checks).
+    const repos = repoSources(ctx, floor, Array.isArray(msg.repos) ? [...new Set(msg.repos.slice(0, MAX_REPOS + MAX_TEAM_REPOS + 1).map((x) => str(x, 140)))] : []);
+    if (typeof repos === 'string') return ctx.warn(c, repos);
     // A shell is theirs too: `claude auth login` or `gh auth login` typed there signs them in.
     const hire = () => {
       const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, msg.provider, model, effort, undefined, c.accountId, repos, msg.via === 'herald' ? 'herald' : undefined);
+      if (typeof r === 'string') return ctx.warn(c, r);
       const issue = kind === 'agent' ? issueNumber(msg.issue) : undefined;
-      const across = repos.length ? ` across ${[floor.def.name, ...repos.map((x) => x.name)].join(' + ')}` : '';
-      if (typeof r === 'string') ctx.warn(c, r);
-      else ctx.toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${issue ? ` for issue #${issue}` : r.prompt ? ' with a task' : ''}${across}`);
-      if (typeof r !== 'string' && issue) ctx.takeIssue(c, floor, issue);
+      const issueRepo = issue ? normalizeRepo(msg.issueRepo) : undefined;
+      // Across repositories: its first (the floor's project, or one of a team floor's repositories) and the others.
+      const across = r.repos?.length ? ` across ${[r.worktree?.repo ? repoName(r.worktree.repo) : floor.def.name, ...r.repos.map((x) => x.name)].join(' + ')}` : '';
+      ctx.toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${issue ? ` for issue ${ghRef(issue, issueRepo)}` : r.prompt ? ' with a task' : ''}${across}`);
+      if (issue) ctx.takeIssue(c, floor, issue, issueRepo);
     };
     // Every project it gets a worktree of starts from what's on GitHub.
-    const fresh = [floor, ...repos.map((x) => ctx.floors.get(x.floor)!)];
+    const fresh = [floor, ...repos.flatMap((x) => (x.floor === floor.id ? [] : [ctx.floors.get(x.floor)!]))];
     ctx.withSignIn(c, kind === 'agent' ? ctx.claudeFor(msg.provider ?? floor.workers.officeDefault.provider) : undefined, () => (msg.worktree === true ? ctx.withFreshBase(c, fresh, hire) : hire()));
   },
   'worker.resume'(ctx, c, msg) {
@@ -120,8 +124,9 @@ export const workerHandlers = {
     ctx.warn(c, err);
     const issue = w?.info.kind === 'agent' ? issueNumber(msg.issue) : undefined;
     if (w && !err && issue) {
-      ctx.toastFloor(w.floor, `${who} handed issue #${issue} to ${w.info.name}`);
-      ctx.takeIssue(c, w.floor, issue);
+      const repo = normalizeRepo(msg.issueRepo);
+      ctx.toastFloor(w.floor, `${who} handed issue ${ghRef(issue, repo)} to ${w.info.name}`);
+      ctx.takeIssue(c, w.floor, issue, repo);
     }
   },
   'station.prompt'(ctx, c, msg) {
@@ -160,9 +165,9 @@ export const workerHandlers = {
       // returns at once and can miss it, so look again shortly after.
       const own = r.prs.find((p) => !p.repo || p.repo === info?.worktree?.path.split(/[\\/]/).pop());
       void floor.github.refresh().then(() => {
-        if (own && !floor.github.pulls.items.some((p) => p.number === own.number)) setTimeout(() => void floor.github.refresh(), 3000);
+        if (own && !floor.github.pulls.items.some((p) => p.url === own.url || (!p.repo && p.number === own.number))) setTimeout(() => void floor.github.refresh(), 3000);
       });
-      for (const x of info?.repos ?? []) void ctx.floors.get(x.floor)?.github.refresh();
+      for (const x of info?.repos ?? []) if (x.floor !== floor.id) void ctx.floors.get(x.floor)?.github.refresh();
     }));
   },
   'term.input'(ctx, c, msg) {
@@ -194,3 +199,27 @@ export const workerHooks: FeatureHooks = {
   },
   closedOn: (_ctx, c, floor) => floor.workers.detachAll(c.id),
 };
+
+/**
+ * The repositories a hire names (see worker.spawn's `repos`): another floor's id for its project, or
+ * `<floor>/<folder>` for one of a team floor's repositories, maybe one of `floor`'s own. Why not, when
+ * one of them isn't (any more).
+ */
+function repoSources(ctx: Ctx, floor: Floor, keys: string[]): RepoSource[] | string {
+  const repos: RepoSource[] = [];
+  for (const key of keys) {
+    const team = parseTeamRepoKey(key);
+    const other = ctx.floors.get(team?.floor ?? key);
+    if (!other) return 'That project is no longer in the building';
+    if (!team) {
+      if (other === floor) return "The worker's own floor's project is already in its workspace";
+      if (other.def.team) return `${other.def.name} is a team floor: pick its repositories one by one`;
+      repos.push({ floor: other.id, name: other.def.name, repo: other.def.repo, dir: other.dir });
+      continue;
+    }
+    const r = other.def.repos?.find((x) => x.path === team.path);
+    if (!r) return `${team.path} is no longer one of ${other.def.name}'s repositories`;
+    repos.push({ floor: other.id, name: repoName(r.repo), repo: r.repo, dir: path.join(other.dir, r.path), ...(other === floor ? { checkout: r.path } : {}) });
+  }
+  return repos;
+}

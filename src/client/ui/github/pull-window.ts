@@ -4,7 +4,8 @@ import type { Net } from '../../net';
 import { store, workerForPull } from '../../state';
 import { h, openModal, type Modal } from '../dom';
 import { officePrompt } from '../prompts';
-import { getJson, getText } from './api';
+import { ghRef, sameGh } from '../../../shared/floors';
+import { getJson, getText, inRepo } from './api';
 import { openClose } from './close';
 import { commentBox } from './comment-box';
 import { labelButton, labelChip } from './labels';
@@ -47,7 +48,7 @@ export function openPull(first: GhPull, net: Net, actions: BoardActions) {
   // The comment box stays put while the conversation above it is redrawn, so a load finishing
   // doesn't take the focus (or the text) away from someone typing.
   const thread = h('div.gh-items');
-  const comment = commentBox('pull', it.number, itemUrl, net, (c) => {
+  const comment = commentBox('pull', it.number, it.repo, itemUrl, net, (c) => {
     if (!detail) return loadAll();
     detail.comments.push(c);
     renderConv();
@@ -58,7 +59,7 @@ export function openPull(first: GhPull, net: Net, actions: BoardActions) {
   const footBtns = h('span.gh-foot');
   const el = h(
     'div.modal.gh-window',
-    { role: 'dialog', 'aria-label': `Pull request #${it.number}`, tabindex: -1 },
+    { role: 'dialog', 'aria-label': `Pull request ${ghRef(it.number, it.repo)}`, tabindex: -1 },
     h('header', {}, pill, title, reload, close),
     meta,
     h('nav.gh-tabs', { role: 'tablist' }, tabConv, tabFiles),
@@ -68,15 +69,15 @@ export function openPull(first: GhPull, net: Net, actions: BoardActions) {
 
   const handToWorker = () => {
     const p = mergePref(detail?.repo.methods ?? ['squash', 'merge', 'rebase']);
-    if (detail && conflicted(detail)) actions.assign(fixConflictsPrompt(it, p.method, p.deleteBranch), `Fix conflicts & merge PR #${it.number}`);
-    else actions.assign(fixAndMergePrompt(it, p.method, p.deleteBranch), `Fix up & merge PR #${it.number}`);
+    if (detail && conflicted(detail)) actions.assign(fixConflictsPrompt(it, p.method, p.deleteBranch), `Fix conflicts & merge PR ${ghRef(it.number, it.repo)}`, undefined, it.repo);
+    else actions.assign(fixAndMergePrompt(it, p.method, p.deleteBranch), `Fix up & merge PR ${ghRef(it.number, it.repo)}`, undefined, it.repo);
   };
 
   const renderFrame = () => {
     const [word, cls] = stateOf(it);
     pill.className = `pill ${cls}`;
     pill.textContent = word;
-    title.textContent = `#${it.number} ${it.title}`;
+    title.textContent = `${ghRef(it.number, it.repo)} ${it.title}`;
     title.title = it.title;
     const commits = detail ? `${detail.commits} commit${detail.commits === 1 ? '' : 's'}` : 'its commits';
     meta.replaceChildren(
@@ -111,10 +112,10 @@ export function openPull(first: GhPull, net: Net, actions: BoardActions) {
     footBtns.replaceChildren(
       ...nodes(
       w ? h('button.btn', { type: 'button', onclick: () => actions.goToDesk(w.deskId) }, `🪑 Go to ${w.name}'s desk`) : null,
-      h('button.btn', { type: 'button', title: 'Send a worker your own prompt about this PR', onclick: () => actions.ask(pullContext(it), `Ask about PR #${it.number}`) }, '✍️ Ask a worker…'),
-      isOpen ? h('button.btn', { type: 'button', onclick: () => actions.assign(reviewPrompt(it), `Review PR #${it.number}`) }, '🔍 Review') : null,
+      h('button.btn', { type: 'button', title: 'Send a worker your own prompt about this PR', onclick: () => actions.ask(pullContext(it), `Ask about PR ${ghRef(it.number, it.repo)}`) }, '✍️ Ask a worker…'),
+      isOpen ? h('button.btn', { type: 'button', onclick: () => actions.assign(reviewPrompt(it), `Review PR ${ghRef(it.number, it.repo)}`, undefined, it.repo) }, '🔍 Review') : null,
       isOpen
-        ? h('button.btn', { type: 'button', title: 'A few workers review it in the meeting room, each through its own lens, and the office posts one combined review', onclick: () => actions.meeting({ pattern: 'review', pr: it.number, title: `Review of PR #${it.number}`, prompt: officePrompt('pull.panel', pullVars(it)) }) }, '🤝 Review panel…')
+        ? h('button.btn', { type: 'button', title: 'A few workers review it in the meeting room, each through its own lens, and the office posts one combined review', onclick: () => actions.meeting({ pattern: 'review', pr: it.number, repo: it.repo, title: `Review of PR ${ghRef(it.number, it.repo)}`, prompt: officePrompt('pull.panel', pullVars(it)) }) }, '🤝 Review panel…')
         : null,
       conflicts
         ? h('button.btn.primary', { type: 'button', title: 'A new worker merges the base in, resolves the conflicts, gets the checks green, then merges', onclick: handToWorker }, '✨ Fix conflicts & merge')
@@ -476,7 +477,7 @@ export function openPull(first: GhPull, net: Net, actions: BoardActions) {
     detailError = '';
     diffError = '';
     renderConv();
-    getJson<GhPullDetail>(`/api/gh/pull?number=${it.number}`)
+    getJson<GhPullDetail>(inRepo(`/api/gh/pull?number=${it.number}`, it.repo))
       .then((d) => {
         if (g !== generation) return;
         detail = d;
@@ -487,7 +488,7 @@ export function openPull(first: GhPull, net: Net, actions: BoardActions) {
       })
       .catch((err) => g === generation && (detailError = (err as Error).message))
       .finally(() => g === generation && (renderFrame(), renderConv()));
-    getText(`/api/gh/pull/diff?number=${it.number}`)
+    getText(inRepo(`/api/gh/pull/diff?number=${it.number}`, it.repo))
       .then((text) => {
         if (g !== generation) return;
         files = parseDiff(text);
@@ -502,13 +503,13 @@ export function openPull(first: GhPull, net: Net, actions: BoardActions) {
   });
 
   const unsub = store.on('pulls', () => {
-    const fresh = store.pulls.items.find((p) => p.number === it.number);
+    const fresh = store.pulls.items.find((p) => sameGh(p, it.number, it.repo));
     if (!fresh) return;
     it = detail ? { ...fresh, state: fresh.state === 'OPEN' ? detail.state : fresh.state } : fresh;
     renderFrame();
   });
   const modal: Modal = openModal(el, {
-    doing: `🔀 reading PR #${it.number}`,
+    doing: `🔀 reading PR ${ghRef(it.number, it.repo)}`,
     onClose: () => {
       unsub();
       comment.dispose();

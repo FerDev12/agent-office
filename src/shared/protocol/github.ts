@@ -10,6 +10,8 @@ export interface GhLabel {
 
 export interface GhIssue {
   number: number;
+  /** owner/name of the repository it's in, on a floor that has several (see FloorInfo.team). */
+  repo?: string;
   title: string;
   state: string;
   url: string;
@@ -26,6 +28,8 @@ export interface GhIssue {
 
 export interface GhPull {
   number: number;
+  /** owner/name of the repository it's in, on a floor that has several (see FloorInfo.team). */
+  repo?: string;
   title: string;
   state: string;
   isDraft: boolean;
@@ -43,7 +47,7 @@ export interface GhPull {
   deletions: number;
   checks: 'pass' | 'fail' | 'pending' | 'none';
   body: string;
-  /** Issues it closes ("closes #12" in its description), as GitHub links them. */
+  /** Issues of its own repository it closes ("closes #12" in its description), as GitHub links them. */
   closes: number[];
 }
 
@@ -98,7 +102,7 @@ export interface GhCheck {
   url?: string;
 }
 
-/** Everything the PR window shows beyond the board card: GET /api/gh/pull?number=N */
+/** Everything the PR window shows beyond the board card: GET /api/gh/pull?number=N (&repo=owner/name on a team floor) */
 export interface GhPullDetail {
   number: number;
   body: string;
@@ -121,7 +125,7 @@ export interface GhPullDetail {
   viewer: string;
 }
 
-/** GET /api/gh/issue?number=N */
+/** GET /api/gh/issue?number=N (&repo=owner/name on a team floor) */
 export interface GhIssueDetail {
   number: number;
   /** OPEN or CLOSED. */
@@ -137,25 +141,27 @@ export const GH_COMMENT_MAX = 65536;
 /** Longer than any label name: GitHub stops at 50 characters, and JS counts an emoji as two. */
 export const GH_LABEL_MAX = 100;
 
+// `repo` on the messages about one issue or pull request is its GhIssue.repo / GhPull.repo: which of
+// a team floor's repositories it's in. A floor with one repository needs none.
 export type GitHubClientMsg =
   | { t: 'gh.refresh' }
   /** Merge a pull request; the answer comes back as gh.merged. */
-  | { t: 'gh.merge'; number: number; method: GhMergeMethod; deleteBranch: boolean; auto?: boolean }
+  | { t: 'gh.merge'; number: number; repo?: string; method: GhMergeMethod; deleteBranch: boolean; auto?: boolean }
   /** Comment on an issue or a PR's conversation, as the server's gh account; answered with gh.commented. */
-  | { t: 'gh.comment'; kind: 'issue' | 'pull'; number: number; body: string }
+  | { t: 'gh.comment'; kind: 'issue' | 'pull'; number: number; repo?: string; body: string }
   /** Close an issue, or a pull request without merging it; the answer comes back as gh.closed. */
-  | { t: 'gh.close'; kind: 'issue' | 'pull'; number: number; comment?: string; reason?: GhCloseReason; deleteBranch?: boolean }
+  | { t: 'gh.close'; kind: 'issue' | 'pull'; number: number; repo?: string; comment?: string; reason?: GhCloseReason; deleteBranch?: boolean }
   /** Put labels on an issue or PR and take others off, as the server's gh account; answered with gh.labeled. */
-  | { t: 'gh.labels'; kind: 'issue' | 'pull'; number: number; add: string[]; remove: string[] };
+  | { t: 'gh.labels'; kind: 'issue' | 'pull'; number: number; repo?: string; add: string[]; remove: string[] };
 
 export type GitHubServerMsg =
   | { t: 'gh.issues'; state: GhState<GhIssue> }
   | { t: 'gh.pulls'; state: GhState<GhPull> }
   /** Sent to whoever asked for the merge. */
-  | { t: 'gh.merged'; number: number; error?: string }
+  | { t: 'gh.merged'; number: number; repo?: string; error?: string }
   /** Sent to whoever commented: the comment as GitHub saved it, or why it wasn't. */
-  | { t: 'gh.commented'; kind: 'issue' | 'pull'; number: number; comment?: GhComment; error?: string }
+  | { t: 'gh.commented'; kind: 'issue' | 'pull'; number: number; repo?: string; comment?: GhComment; error?: string }
   /** Sent to whoever asked to close it. */
-  | { t: 'gh.closed'; kind: 'issue' | 'pull'; number: number; error?: string }
+  | { t: 'gh.closed'; kind: 'issue' | 'pull'; number: number; repo?: string; error?: string }
   /** Sent to whoever changed them: the labels it has now, or why they didn't change. */
-  | { t: 'gh.labeled'; kind: 'issue' | 'pull'; number: number; labels?: GhLabel[]; error?: string };
+  | { t: 'gh.labeled'; kind: 'issue' | 'pull'; number: number; repo?: string; labels?: GhLabel[]; error?: string };

@@ -17,7 +17,7 @@ const USAGE = `Usage:
   office-workers hire [options] <<'EOF'         hire a worker at a free desk; its task on stdin
   …the task…                                    (or --prompt "…"). Options: --provider <name>
   EOF                                           --model <m> --effort <e> --desk <id> --issue <n>
-                                                --no-worktree
+                                                (owner/name#n on a team floor) --no-worktree
   office-workers home <name|id>... [--cleanup auto|keep|worktree|all]
                                                 send workers home. auto (the default) deletes each
                                                 one's worktree and branch unless they hold work
@@ -131,9 +131,10 @@ export function parseArgs(argv) {
       out.effort = opts['--effort'];
     }
     if (opts['--issue'] !== undefined) {
-      const n = /^#?(\d+)$/.exec(String(opts['--issue']).trim());
-      if (!n || Number(n[1]) < 1) throw new UsageError(`--issue takes an issue number, e.g. --issue 12 (got ${opts['--issue']})`);
-      out.issue = Number(n[1]);
+      const m = /^(?:([\w.-]+\/[\w.-]+))?#?(\d+)$/.exec(String(opts['--issue']).trim());
+      if (!m || Number(m[2]) < 1) throw new UsageError(`--issue takes an issue number, e.g. --issue 12, or owner/name#12 on a team floor (got ${opts['--issue']})`);
+      out.issue = Number(m[2]);
+      if (m[1]) out.repo = m[1];
     }
     return out;
   }
@@ -294,6 +295,7 @@ export const TOOLS = [
         worktree: { type: 'boolean', description: 'Its own git worktree and branch (default true in a git checkout).' },
         desk: { type: 'string', description: 'A desk or bean bag id (desk-3). Default: the next free one.' },
         issue: { type: 'integer', minimum: 1, description: 'The GitHub issue it works on, assigned when it starts.' },
+        repo: { type: 'string', description: "On a team floor (several repositories), the issue's repository as owner/name; its worktree is of that one." },
       },
       required: ['prompt'],
       additionalProperties: false,

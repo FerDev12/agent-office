@@ -8,7 +8,11 @@ import type { FloorDef } from './building.js';
 import { excludeFromGit } from './config.js';
 import { agentProviders, configuredProvider } from './agents.js';
 import { WorkerManager, workedMs, type HookEnv, type RunAs } from './workers.js';
-import { GitHub, MergeWatch } from './github.js';
+import { MergeWatch } from './github.js';
+import { Boards, type BoardSource } from './boards.js';
+import { writeTeamBrief } from './team-floors.js';
+import type { RepoSource } from './workers/types.js';
+import { repoName, sameRepo } from '../shared/floors.js';
 import type { GhAs } from './signins.js';
 import { TaskQueue } from './queue.js';
 import { Changes } from './changes.js';
@@ -72,9 +76,9 @@ export interface FloorContext {
   locksUp(): boolean;
 }
 
-/** The open pull request on a floor's board whose head is `branch`. */
-function openPull(floor: Floor, branch: string): { number: number; url: string } | undefined {
-  const pr = floor.github.pulls.items.find((p) => p.state === 'OPEN' && p.headRefName === branch);
+/** The open pull request on a floor's board whose head is `branch` (in `repo`, on a team floor). */
+function openPull(floor: Floor, branch: string, repo?: string): { number: number; url: string } | undefined {
+  const pr = floor.github.pulls.items.find((p) => p.state === 'OPEN' && p.headRefName === branch && (!repo || !p.repo || sameRepo(p.repo, repo)));
   return pr ? { number: pr.number, url: pr.url } : undefined;
 }
 
@@ -106,14 +110,17 @@ export function projectInfo(dir: string, name: string, agentCmd: string, agentAr
 
 /**
  * One floor of the building: a project's checkout with its own desks and workers, issues and PR
- * boards, task queue, pictures and jukebox, all kept in that checkout's .agent-office folder.
+ * boards, task queue, pictures and jukebox, all kept in that checkout's .agent-office folder. A team
+ * floor is a folder of the office's instead, with a checkout of each of its repositories in it (see
+ * FloorDef.team), and its boards show all of theirs.
  */
 export class Floor {
   readonly id: string;
   readonly dir: string;
   readonly project: ProjectInfo;
   readonly workers: WorkerManager;
-  readonly github: GitHub;
+  /** Its GitHub boards: its project's, or each of a team floor's repositories' together. */
+  readonly github: Boards;
   readonly queue: TaskQueue;
   readonly changes: Changes;
   readonly decor: Decor;
@@ -142,6 +149,8 @@ export class Floor {
   private landedTimer?: NodeJS.Timeout;
   /** Workers across repositories whose worktrees are being checked before they go home. */
   private landing = new Set<string>();
+  /** The branch each of a team floor's checkouts was on when it joined, by folder: what Changes diffs a worker there against. */
+  private branches = new Map<string, string | undefined>();
 
   constructor(
     readonly def: FloorDef,
@@ -151,8 +160,10 @@ export class Floor {
     this.dir = def.dir;
     const dataDir = path.join(def.dir, '.agent-office');
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-    excludeFromGit(def.dir);
-    this.project = projectInfo(def.dir, def.name, ctx.agentCmd, ctx.agentArgs);
+    // A team floor's folder is the office's own, not a checkout, even inside one (a home folder in git, say).
+    if (!def.team) excludeFromGit(def.dir);
+    const project = projectInfo(def.dir, def.name, ctx.agentCmd, ctx.agentArgs);
+    this.project = def.team ? { ...project, branch: undefined, remote: undefined } : project;
     this.docs = new Docs(def.dir);
     // Before the workers and the dog: the back office's desks are only there once it's built.
     this.plan = new FloorPlanStore(dataDir);
@@ -206,9 +217,9 @@ export class Floor {
       ctx.dshProfile,
     );
     this.workers.wing = () => this.plan.wing;
+    if (def.team) this.workers.team = () => this.teamSources();
 
-    this.github = new GitHub(
-      def.dir,
+    this.github = new Boards(
       (state) => ctx.emit(this, { t: 'gh.issues', state }),
       (state) => {
         ctx.emit(this, { t: 'gh.pulls', state });
@@ -217,24 +228,24 @@ export class Floor {
         // A worker may have opened one from a branch it made itself, mid-turn or from a shell.
         void this.workers.syncBranches();
         for (const p of this.merges.look(state.items)) {
-          ctx.toast(this, `🎉 PR #${p.number} merged: ${p.title}`);
-          this.merged(p.number);
+          ctx.toast(this, `🎉 PR ${p.repo ? `${repoName(p.repo)}` : ''}#${p.number} merged: ${p.title}`);
+          this.merged(p.number, undefined, p.repo);
         }
         this.sendLandedHome();
         ctx.pullsChanged(this);
       },
     );
     // The 📋 task queue seats workers by itself: it watches the workers and links PRs from GitHub.
-    this.queue = new TaskQueue(dataDir, this.workers, !!this.project.branch, {
+    this.queue = new TaskQueue(dataDir, this.workers, def.team ? () => !!def.repos?.length : !!this.project.branch, {
       update: (state) => {
         ctx.emit(this, { t: 'queue', state });
         // A task's pull request may just have been linked (or merged).
         this.sendLandedHome();
       },
       toast: (text, level) => ctx.toast(this, text, level),
-      claimIssue: (issue, owner) => {
+      claimIssue: (issue, owner, repo) => {
         const as = ctx.ghAs(owner);
-        return typeof as === 'string' ? Promise.resolve(as) : this.github.claim(issue, as);
+        return typeof as === 'string' ? Promise.resolve(as) : this.github.claim(issue, as, repo);
       },
       refreshGitHub: () => void this.github.refresh(),
       hiringPaused: () => ctx.ledger.hiringPaused,
@@ -262,14 +273,17 @@ export class Floor {
         write: (id, data, by) => this.workers.write(id, data, by),
         kill: (id) => this.workers.kill(id),
       },
-      this.project.branch ? new Worktrees(def.dir) : undefined,
+      // A team floor's meetings sit in its folder, with every checkout to hand, rather than in a worktree of one.
+      this.project.branch && !def.team ? new Worktrees(def.dir) : undefined,
       {
         update: (state) => ctx.emit(this, { t: 'meeting', state }),
         toast: (text, level) => ctx.toast(this, text, level),
         hiringPaused: () => ctx.ledger.hiringPaused,
-        postReview: (pr, file, owner) => {
+        postReview: (pr, file, owner, repo) => {
           const as = ctx.ghAs(owner);
-          return typeof as === 'string' ? Promise.reject(new Error(as)) : this.github.review(pr, file, as);
+          const board = this.github.for(repo);
+          if (typeof board === 'string') return Promise.reject(new Error(board));
+          return typeof as === 'string' ? Promise.reject(new Error(as)) : board.review(pr, file, as);
         },
         prompt: (id) => ctx.prompts.text(id),
       },
@@ -282,9 +296,17 @@ export class Floor {
       (workerId, repo) => {
         const w = this.workers.get(workerId);
         if (!w) return undefined;
-        if (!repo) return { name: w.name, cwd: w.worktree ? path.join(def.dir, w.worktree.path) : def.dir, rel: w.worktree?.path ?? '', worktreeBase: w.worktree?.base };
-        // One of the other floors' repositories it works in: diffed against, and PRs opened against, that floor's branch.
-        const r = w.repos?.find((x) => x.floor === repo);
+        const wt = w.worktree;
+        if (!repo) {
+          const target = { name: w.name, cwd: wt ? path.join(def.dir, wt.path) : def.dir, rel: wt?.path ?? '', worktreeBase: wt?.base };
+          // A worktree of one of a team floor's repositories: diffed against, and its PR opened against, the branch it was cut from.
+          return wt?.checkout ? { ...target, baseBranch: wt.from ?? null, openPull: (branch: string) => openPull(this, branch, wt.repo) } : target;
+        }
+        // One of the other repositories it works in: diffed against, and PRs opened against, the branch it was cut from.
+        const r = w.repos?.find((x) => x.name === repo);
+        // A worker in a team floor's folder: one of the checkouts there, against the branch it was on when it joined.
+        const c = !r && !wt ? def.repos?.find((x) => x.path === repo) : undefined;
+        if (c) return { name: w.name, cwd: path.join(def.dir, c.path), rel: c.path, baseBranch: this.branches.get(c.path) ?? null, openPull: (branch) => openPull(this, branch, c.repo) };
         if (!r) return undefined;
         const other = ctx.floor(r.floor);
         return {
@@ -293,7 +315,7 @@ export class Floor {
           rel: r.path,
           worktreeBase: r.base,
           baseBranch: r.from ?? null,
-          openPull: (branch) => (other ? openPull(other, branch) : undefined),
+          openPull: (branch) => (other ? openPull(other, branch, r.repo) : undefined),
           refreshGitHub: () => void other?.github.refresh(),
         };
       },
@@ -310,16 +332,42 @@ export class Floor {
     this.whiteboard = new Whiteboard(dataDir);
     this.ready = this.workers.start();
 
-    void this.github.refresh();
+    this.reposChanged();
     // A floor with people on it, or work under way, keeps its boards fresh; the others check in now and then.
     this.timer = setInterval(() => {
       if (this.active() || Date.now() - this.github.issues.fetchedAt > IDLE_REFRESH_MS) void this.github.refresh();
     }, REFRESH_MS);
   }
 
-  /** Pull request `n` merged (`by` someone, from the PR window): the gong rings, once per PR. */
-  merged(n: number, by?: string) {
-    if (this.merges.ring(n)) this.ctx.emit(this, { t: 'gong', why: 'merged', pr: n, by });
+  /** Pull request `n` (in `repo`, on a team floor) merged (`by` someone, from the PR window): the gong rings, once per PR. */
+  merged(n: number, by?: string, repo?: string) {
+    if (this.merges.ring(n, repo)) this.ctx.emit(this, { t: 'gong', why: 'merged', pr: n, by });
+  }
+
+  /**
+   * The floor's repositories changed (a team floor's came or went, or it just opened): its boards show
+   * theirs, and the brief its agents read in its folder says which folder is which.
+   */
+  reposChanged() {
+    const { def } = this;
+    if (!def.team) {
+      void this.github.set([{ dir: def.dir }]);
+      return;
+    }
+    const repos = def.repos ?? [];
+    for (const r of repos) if (!this.branches.has(r.path)) this.branches.set(r.path, projectInfo(path.join(def.dir, r.path), r.repo, this.ctx.agentCmd, []).branch);
+    void this.github.set(repos.map((r): BoardSource => ({ repo: r.repo, dir: path.join(def.dir, r.path) })));
+    writeTeamBrief(def.dir, def.name, repos, this.ctx.prompts);
+  }
+
+  /** On a team floor with one repository, that one (owner/name): an issue number alone can only mean it. */
+  get soleRepo(): string | undefined {
+    return this.def.team && this.def.repos?.length === 1 ? this.def.repos[0].repo : undefined;
+  }
+
+  /** A team floor's repositories, as its workers' own (see WorkerManager.team). */
+  private teamSources(): RepoSource[] {
+    return (this.def.repos ?? []).map((r) => ({ floor: this.id, name: repoName(r.repo), repo: r.repo, dir: path.join(this.dir, r.path), checkout: r.path }));
   }
 
   /**
@@ -405,6 +453,7 @@ export class Floor {
       waiting: ws.filter((w) => w.kind === 'agent' && (w.status === 'needs_input' || (w.status === 'done' && !w.acked))).length,
       people: this.ctx.people(this),
       wing: this.plan.wing,
+      ...(this.def.team ? { team: true, repos: (this.def.repos ?? []).map((r) => ({ repo: r.repo, path: r.path })) } : {}),
     };
   }
 

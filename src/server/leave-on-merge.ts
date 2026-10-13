@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { GhPull, LeaveOnMergeState, QueueTask, WorkerInfo } from '../shared/protocol.js';
 import { DESK_BY_ID } from '../shared/layout.js';
 import { isBusy, workerPr, type WorkerPr } from '../shared/status.js';
+import { sameGh, sameRepo } from '../shared/floors.js';
 
 /**
  * Whether a worker whose pull request merged goes home by itself, picked in ⚙️ Settings by anyone
@@ -59,7 +60,7 @@ export interface Landed {
   pr: number;
   /** The merged PR's head commit, when GitHub said: everything up to it is delivered. */
   head?: string;
-  /** A worker across repositories: the head of each other repository's merged PR, by floor. */
+  /** A worker across repositories: the head of each other repository's merged PR, by its name (WorkerRepo.name). */
   heads?: Record<string, string | undefined>;
   /** …and every PR of its that merged, as "api #7". */
   prs?: string[];
@@ -104,7 +105,7 @@ export function landedWork(w: WorkerInfo, pulls: GhPull[], tasks: QueueTask[], p
   const pr = workerPr(w, pulls, tasks);
   if (w.repos?.length) return landedAcross(w, pr, pulls, pullsOf);
   if (pr?.state !== 'merged') return undefined;
-  return { worker: w, pr: pr.number, head: pulls.find((p) => p.number === pr.number)?.headRefOid };
+  return { worker: w, pr: pr.number, head: pulls.find((p) => sameGh(p, pr.number, pr.repo))?.headRefOid };
 }
 
 /** landedWorkers for a worker across repositories, whose own floor's PR, if any, is `own`. */
@@ -118,16 +119,17 @@ function landedAcross(w: WorkerInfo, own: WorkerPr | undefined, pulls: GhPull[],
     numbers.push(own.number);
   }
   for (const r of w.repos ?? []) {
-    const theirs = (pullsOf?.(r.floor) ?? []).filter((p) => p.number === r.pr?.number || p.headRefName === r.branch);
+    // A team floor's list has each of its repositories' pull requests: only this one's are its.
+    const theirs = (pullsOf?.(r.floor) ?? []).filter((p) => (!p.repo || !r.repo || sameRepo(p.repo, r.repo)) && (p.number === r.pr?.number || p.headRefName === r.branch));
     // Opened from its desk, but its floor doesn't list it (yet, or any more): can't tell.
     if (r.pr && !theirs.some((p) => p.number === r.pr!.number)) return undefined;
     if (theirs.some((p) => p.state === 'OPEN' || p.state === 'DRAFT')) return undefined;
     const merged = theirs.find((p) => p.state === 'MERGED');
     if (!merged) continue;
-    heads[r.floor] = merged.headRefOid;
+    heads[r.name] = merged.headRefOid;
     prs.push(`${r.name} #${merged.number}`);
     numbers.push(merged.number);
   }
   if (!numbers.length) return undefined;
-  return { worker: w, pr: numbers[0], head: own && pulls.find((p) => p.number === own.number)?.headRefOid, heads, prs };
+  return { worker: w, pr: numbers[0], head: own && pulls.find((p) => sameGh(p, own.number, own.repo))?.headRefOid, heads, prs };
 }

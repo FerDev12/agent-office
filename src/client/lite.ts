@@ -7,7 +7,7 @@
 import { Net } from './net';
 import { AVATAR_COLORS, loadProfile, loadSettings, saveProfile, store } from './state';
 import { randomLook } from '../shared/avatar';
-import { cloneLabel } from '../shared/floors';
+import { cloneLabel, repoName } from '../shared/floors';
 import { ROOF } from '../shared/rooftop';
 import { DESK_BY_ID, nextFreeSeat } from '../shared/layout';
 import { isAsleep } from '../shared/status';
@@ -26,7 +26,7 @@ import { openSignIns } from './ui/signins';
 import { modelBadge, providerLabel } from './ui/provider';
 import { byUrgency, waitingInOrder, waitingLabel } from './nextup';
 import { askNotifyPermission, DesktopNotifier, notifyPermission, waitingOnSomeone } from './notify';
-import { repoChoices } from './shared/hiring';
+import { canWorktree, repoChoices } from './shared/hiring';
 // The tab title counts the workers waiting on someone, on every floor, as the 3D office's does.
 import { renderTitle } from './shared/title';
 
@@ -94,6 +94,8 @@ function offTheRoof() {
 }
 
 // ---- The floor you're on ------------------------------------------------------------------------
+/** A team floor's repositories in a few words. */
+const teamLine = (f: FloorInfo) => (f.repos?.length ? `🏢 ${f.repos.map((r) => repoName(r.repo)).join(' · ')}` : '🏢 no repositories yet');
 const floorSelect = $('floor') as HTMLSelectElement;
 const floorLabel = (f: FloorInfo) => `${f.name}${f.cloning ? ` (${cloneLabel(f.clone)})` : f.waiting ? ` · 🙋 ${f.waiting}` : ''}`;
 
@@ -105,7 +107,8 @@ function renderFloors() {
   floorSelect.disabled = store.floors.length < 2;
   const p = store.project;
   const f = store.currentFloor();
-  $('floor-meta').textContent = p ? [p.branch && `⎇ ${p.branch}`, f?.repo ?? p.dir, f && `👥 ${f.people} here`].filter(Boolean).join(' · ') : store.floors.length ? '' : 'Add a project from the elevator in the 3D office.';
+  const where = f?.team ? teamLine(f) : (f?.repo ?? p?.dir);
+  $('floor-meta').textContent = p ? [p.branch && `⎇ ${p.branch}`, where, f && `👥 ${f.people} here`].filter(Boolean).join(' · ') : store.floors.length ? '' : 'Add a project from the elevator in the 3D office.';
   // Someone waiting on another floor: a way straight there.
   const elsewhere = store.floors.filter((o) => o.id !== store.floor && o.waiting > 0 && !o.cloning);
   const box = $('elsewhere');
@@ -256,12 +259,12 @@ function promptWorker(id: string) {
 }
 
 // ---- New work: a prompt for a worker who's here, or a new one at a free desk -------------------
-function hire(deskId: string, prompt: string, worktree: boolean, provider?: AgentProvider, model?: string, effort?: AgentEffort, repos?: string[], issue?: number) {
-  net.send({ t: 'worker.spawn', deskId, prompt, worktree, provider, model, effort, issue, repos: repos?.length ? repos : undefined });
+function hire(deskId: string, prompt: string, worktree: boolean, provider?: AgentProvider, model?: string, effort?: AgentEffort, repos?: string[], issue?: number, issueRepo?: string) {
+  net.send({ t: 'worker.spawn', deskId, prompt, worktree, provider, model, effort, issue, issueRepo: issue ? issueRepo : undefined, repos: repos?.length ? repos : undefined });
 }
 
-/** With `issue`, the worker the prompt goes to takes that GitHub issue. */
-function sendToWorker(title: string, text: { context?: string; initial?: string } = {}, issue?: number) {
+/** With `issue`, the worker the prompt goes to takes that GitHub issue. `repo` is the repository it's about, on a team floor. */
+function sendToWorker(title: string, text: { context?: string; initial?: string } = {}, issue?: number, repo?: string) {
   if (!store.project) return toast('Pick a floor first', 'warn');
   // The back office's desks too, as far as the floor's built out (see WING).
   const desk = nextFreeSeat((id) => !!store.workerAtDesk(id), store.floorPlan.wing)?.id;
@@ -272,12 +275,12 @@ function sendToWorker(title: string, text: { context?: string; initial?: string 
     ...text,
     newDesk: desk ? DESK_BY_ID.get(desk)!.label : undefined,
     workers: awake.map((w) => ({ id: w.id, name: w.name, color: w.color, status: w.status })),
-    worktreeOption: !!store.project.branch,
+    worktreeOption: canWorktree(),
     providerOption: true,
-    repoOptions: repoChoices(),
+    repoOptions: repoChoices(repo),
     onSubmit: (prompt, to, worktree, provider, model, effort, repos) => {
-      if (to) net.send({ t: 'worker.prompt', workerId: to, prompt, issue });
-      else if (desk) hire(desk, prompt, worktree, provider, model, effort, repos, issue);
+      if (to) net.send({ t: 'worker.prompt', workerId: to, prompt, issue, issueRepo: issue ? repo : undefined });
+      else if (desk) hire(desk, prompt, worktree, provider, model, effort, repos, issue, repo);
     },
   });
 }
@@ -285,8 +288,8 @@ function sendToWorker(title: string, text: { context?: string; initial?: string 
 // ---- The boards, the queue and the meeting room -------------------------------------------------
 function boardActions(): BoardActions {
   return {
-    queue: (prompt, title, issue, provider, model, effort) => net.send({ t: 'queue.add', prompt, title, issue, provider, model, effort }),
-    assign: (prompt, title, issue) => sendToWorker(`🤖 ${title}`, { initial: prompt }, issue),
+    queue: (prompt, title, issue, provider, model, effort, repo) => net.send({ t: 'queue.add', prompt, title, issue, repo, provider, model, effort }),
+    assign: (prompt, title, issue, repo) => sendToWorker(`🤖 ${title}`, { initial: prompt }, issue, repo),
     ask: (context, title) => sendToWorker(`✍️ ${title}`, { context }),
     // There's no desk to walk to from here: its terminal instead.
     goToDesk: (deskId) => {
@@ -307,7 +310,8 @@ function showMeeting(preset?: MeetingPreset) {
       openPr: (id) => {
         const w = store.workers.get(id);
         if (!w) return;
-        const it = w.pr && store.pulls.items.find((p) => p.number === w.pr!.number);
+        // On a team floor numbers repeat across its repositories: its own is known by its URL.
+        const it = w.pr && store.pulls.items.find((p) => (p.repo ? p.url.toLowerCase() === w.pr!.url.toLowerCase() : p.number === w.pr!.number));
         if (it) openPull(it, net, boardActions());
         else if (w.pr) window.open(w.pr.url, '_blank', 'noopener');
         else net.send({ t: 'worker.pr', workerId: id });

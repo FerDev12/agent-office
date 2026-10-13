@@ -10,8 +10,8 @@ import { fileURLToPath } from 'node:url';
 const USAGE = `Usage:
   office-queue list                                  what's on the queue: id, status, title, worker, PR
   office-queue add --title "…" [--issue 12] <<'EOF'  add a task, its prompt on stdin (or --prompt "…");
-  …the prompt…                                       prints the new task's id
-  EOF
+  …the prompt…                                       prints the new task's id. On a team floor, say
+  EOF                                                which repository: --issue owner/name#12
   office-queue remove <id>                           take a waiting task off`;
 
 /** A mistake in how the command was called: the usage is shown with it. */
@@ -40,7 +40,7 @@ export function parseArgs(argv) {
     return { cmd: 'remove', id: rest[0] };
   }
   if (cmd !== 'add') throw new UsageError(`Unknown command: ${cmd}`);
-  /** @type {{ cmd: 'add', title?: string, issue?: number, prompt?: string }} */
+  /** @type {{ cmd: 'add', title?: string, issue?: number, repo?: string, prompt?: string }} */
   const out = { cmd: 'add' };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
@@ -55,14 +55,21 @@ export function parseArgs(argv) {
     else throw new UsageError(`${flag} needs a value`);
     if (flag === '--title') out.title = value.trim();
     else if (flag === '--prompt') out.prompt = value;
-    else {
-      const n = /^#?(\d+)$/.exec(value.trim());
-      if (!n || Number(n[1]) < 1) throw new UsageError(`--issue takes an issue number, e.g. --issue 12 (got ${value})`);
-      out.issue = Number(n[1]);
-    }
+    else Object.assign(out, issueArg(value));
   }
   if (!out.title) throw new UsageError('Give the task a --title, e.g. office-queue add --title "Fix the login redirect"');
   return out;
+}
+
+/**
+ * An issue as --issue gives it: its number (12, #12), or on a team floor its repository too (owner/name#12).
+ * @param {string} value
+ * @returns {{ issue: number, repo?: string }}
+ */
+export function issueArg(value) {
+  const m = /^(?:([\w.-]+\/[\w.-]+))?#?(\d+)$/.exec(String(value).trim());
+  if (!m || Number(m[2]) < 1) throw new UsageError(`--issue takes an issue number, e.g. --issue 12, or owner/name#12 on a team floor (got ${value})`);
+  return { issue: Number(m[2]), ...(m[1] ? { repo: m[1] } : {}) };
 }
 
 /**
@@ -102,7 +109,7 @@ export function buildRequest(cmd, office, prompt) {
   if (!text) {
     throw new UsageError(`The task needs a prompt: pipe it in (office-queue add --title "…" <<'EOF' … EOF) or pass --prompt "…"`);
   }
-  const body = { title: cmd.title, prompt: text, ...(cmd.issue !== undefined ? { issue: cmd.issue } : {}) };
+  const body = { title: cmd.title, prompt: text, ...(cmd.issue !== undefined ? { issue: cmd.issue } : {}), ...(cmd.repo ? { repo: cmd.repo } : {}) };
   return { method: 'POST', url: url.href, headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(body) };
 }
 
@@ -118,7 +125,7 @@ export function formatQueue(view) {
   const status = (t) => (t.status === 'done' && t.outcome && t.outcome !== 'done' ? `done (${t.outcome})` : String(t.status ?? '?'));
   const width = Math.max(...tasks.map((t) => status(t).length));
   for (const t of tasks) {
-    const parts = [`${t.title ?? ''}${t.issue ? ` (issue #${t.issue})` : ''}`];
+    const parts = [`${t.title ?? ''}${t.issue ? ` (issue ${t.repo ?? ''}#${t.issue})` : ''}`];
     if (t.worker) parts.push(`worker ${t.worker}${t.branch ? ` on ${t.branch}` : ''}`);
     if (t.pr) parts.push(`PR #${t.pr.number}${t.pr.state ? ` ${String(t.pr.state).toLowerCase()}` : ''} ${t.pr.url}`);
     if (t.error) parts.push(`error: ${t.error}`);
@@ -204,7 +211,7 @@ export async function main(argv, io = {}) {
     else {
       const task = res.body?.task ?? {};
       out(task.id ?? '');
-      err(`Queued “${task.title ?? cmd.title}” (${task.status ?? 'queued'}${cmd.issue !== undefined ? `, issue #${cmd.issue}` : ''}).`);
+      err(`Queued “${task.title ?? cmd.title}” (${task.status ?? 'queued'}${cmd.issue !== undefined ? `, issue ${cmd.repo ?? ''}#${cmd.issue}` : ''}).`);
     }
     return 0;
   } catch (e) {

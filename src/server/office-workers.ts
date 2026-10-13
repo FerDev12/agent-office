@@ -8,6 +8,7 @@ import type { AgentEffort, AgentProvider, GhPull, QueueTask, WorkerInfo, WorkerS
 import { isAgentEffort, isAgentProvider } from '../shared/protocol.js';
 import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
 import { workerPr } from '../shared/status.js';
+import { normalizeRepo, sameGh } from '../shared/floors.js';
 import { landedWork, notLeaving } from './leave-on-merge.js';
 
 /** One worker as an agent sees it: enough to pick the ones to send home, and say why. */
@@ -64,7 +65,7 @@ const clip = (s: string | undefined): string | undefined => {
 export function workerRow(w: WorkerInfo, view: PullsView, me?: string): WorkerRow {
   const seat = DESK_BY_ID.get(w.deskId);
   const pr = workerPr(w, view.pulls, view.tasks);
-  const pull = pr && view.pulls.find((p) => p.number === pr.number);
+  const pull = pr && view.pulls.find((p) => sameGh(p, pr.number, pr.repo));
   const landed = landedWork(w, view.pulls, view.tasks, view.pullsOf);
   const staying = landed ? notLeaving(w) : undefined;
   const task = clip(w.task ? `${w.task.name}: ${w.task.summary}` : w.prompt);
@@ -140,6 +141,8 @@ export interface HireRequest {
   worktree?: boolean;
   desk?: string;
   issue?: number;
+  /** On a team floor, the repository `issue` is in (owner/name). */
+  repo?: string;
 }
 
 export function readHireRequest(body: unknown, providers: AgentProvider[]): HireRequest | string {
@@ -155,6 +158,7 @@ export function readHireRequest(body: unknown, providers: AgentProvider[]): Hire
   const seat = typeof b.desk === 'string' ? DESK_BY_ID.get(b.desk) : undefined;
   if (b.desk !== undefined && (!seat || seat.station || seat.room)) return "desk is a desk or bean bag's id, like desk-3";
   if (b.issue !== undefined && !(Number.isSafeInteger(b.issue) && (b.issue as number) > 0)) return 'issue is an issue number';
+  if (b.repo !== undefined && !normalizeRepo(b.repo)) return 'repo is a repository, as owner/name';
   return {
     prompt,
     ...(b.provider !== undefined ? { provider: b.provider as AgentProvider } : {}),
@@ -163,6 +167,7 @@ export function readHireRequest(body: unknown, providers: AgentProvider[]): Hire
     ...(typeof b.worktree === 'boolean' ? { worktree: b.worktree } : {}),
     ...(typeof b.desk === 'string' ? { desk: b.desk } : {}),
     ...(b.issue !== undefined ? { issue: b.issue as number } : {}),
+    ...(b.repo !== undefined ? { repo: normalizeRepo(b.repo) } : {}),
   };
 }
 

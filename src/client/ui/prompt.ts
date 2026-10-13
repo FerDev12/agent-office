@@ -4,6 +4,7 @@ import { h, openModal } from './dom';
 import { store } from '../state';
 import { providerPicker, type ProviderPicker } from './provider';
 import { dictateField } from './dictate';
+import type { HireRepo } from '../shared/hiring';
 
 export interface PromptOptions {
   title: string;
@@ -19,8 +20,8 @@ export interface PromptOptions {
   worktreeOption?: boolean;
   /** Offer the configured agent provider choice (only when hiring a new worker). */
   providerOption?: boolean;
-  /** Other floors' projects a new worker in its own worktree can work in too (see WorkerInfo.repos). */
-  repoOptions?: { id: string; name: string }[];
+  /** The repositories a new worker in its own worktree can work in (see repoChoices). */
+  repoOptions?: HireRepo[];
   onSubmit(text: string, opts: { worktree: boolean; provider?: AgentProvider; model?: string; effort?: AgentEffort; repos: string[] }): void;
 }
 
@@ -37,19 +38,24 @@ export function worktreePref(): boolean {
 /**
  * Hiring across repositories: other floors' projects the new worker takes on too, each in a worktree
  * of its own on the same branch. That needs a worktree of its own here, so picking one ticks `wtBox`
- * and unticking that clears them.
+ * and unticking that clears them. On a team floor its own repositories come first, ticked as offered
+ * (all of them, or the one the task is about) whenever the worktree is.
  */
-export function repoPicker(options: { id: string; name: string }[] | undefined, wtBox: HTMLInputElement): { element: HTMLElement | null; value(): string[] } {
+export function repoPicker(options: HireRepo[] | undefined, wtBox: HTMLInputElement): { element: HTMLElement | null; value(): string[] } {
   const picks = (options ?? []).map((r) => {
     const box = h('input', { type: 'checkbox', value: r.id, onchange: () => box.checked && (wtBox.checked = true) }) as HTMLInputElement;
-    return { id: r.id, box, el: h('label.repo-pick', { title: `A worktree of ${r.name} too, on the same branch, with a pull request of its own` }, box, r.name) };
+    box.checked = !!r.picked && wtBox.checked;
+    const title = r.own ? `A worktree of ${r.name}, with a pull request of its own` : `A worktree of ${r.name} too, on the same branch, with a pull request of its own`;
+    return { ...r, box, el: h('label.repo-pick', { title }, box, r.name) };
   });
   if (!picks.length) return { element: null, value: () => [] };
   wtBox.addEventListener('change', () => {
     if (!wtBox.checked) for (const p of picks) p.box.checked = false;
+    else if (!picks.some((p) => p.box.checked)) for (const p of picks) p.box.checked = !!p.picked;
   });
+  const team = picks.some((p) => p.own);
   return {
-    element: h('div.repo-picks', { role: 'group', 'aria-label': 'Other projects to work in' }, h('span', {}, '🗂️ Also work in'), ...picks.map((p) => p.el)),
+    element: h('div.repo-picks', { role: 'group', 'aria-label': team ? 'Repositories to work in' : 'Other projects to work in' }, h('span', {}, team ? '🗂️ Worktrees of' : '🗂️ Also work in'), ...picks.map((p) => p.el)),
     value: () => picks.filter((p) => p.box.checked).map((p) => p.id),
   };
 }

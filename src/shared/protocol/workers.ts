@@ -51,8 +51,10 @@ export interface WorkerInfo {
    * the branch the office was on when the worktree was cut, which its pull request targets.
    * `branch` is the branch the worktree is on: the office's own office/<name>-<id> until the worker
    * switches to one of its own (`git checkout -b fix-x`), which `made` then remembers.
+   * On a team floor it's a worktree of one of the floor's repositories: `checkout` is that one's
+   * folder in the floor's folder, and `repo` its owner/name.
    */
-  worktree?: { path: string; branch: string; base: string; from?: string; made?: string };
+  worktree?: { path: string; branch: string; base: string; from?: string; made?: string; checkout?: string; repo?: string };
   /**
    * Set while the folder it works in (its worktree, or its workspace across repositories) is gone:
    * deleted outside the office, so it can't start there until it's rebuilt ('worker.rebuild') or sent
@@ -64,9 +66,10 @@ export interface WorkerInfo {
   /** The pull requests it opened itself before `pr`: while one of them is open, its work hasn't all landed. */
   pastPrs?: number[];
   /**
-   * Other floors' repositories it works in too, for a task that spans them. It then starts in a
-   * workspace folder with a worktree of each repository in it, its own floor's (`worktree`) and
-   * these, all on the same branch, and each repository gets a pull request of its own.
+   * Other repositories it works in too, for a task that spans them: other floors' projects, or more
+   * of its own team floor's repositories. It then starts in a workspace folder with a worktree of
+   * each repository in it, its first one's (`worktree`) and these, all on the same branch, and each
+   * repository gets a pull request of its own.
    */
   repos?: WorkerRepo[];
   /** True while the branch is being pushed and its pull request opened. */
@@ -105,9 +108,12 @@ export interface WorkerInfo {
 /** Where the branch of a worker whose worktree was deleted still is (see WorkerInfo.lost). */
 export type LostBranch = 'here' | 'origin' | 'gone';
 
-/** Another floor's repository a worker also works in (see WorkerInfo.repos): a worktree of it in the worker's workspace. */
+/**
+ * Another repository a worker also works in (see WorkerInfo.repos): a worktree of it in the worker's
+ * workspace. Each is known by its `name`, which is unique among a worker's repositories.
+ */
 export interface WorkerRepo {
-  /** The floor whose project it is. */
+  /** The floor whose project it is: another floor, or for one of a team floor's repositories, maybe its own. */
   floor: string;
   /** Its folder in the workspace, named after its checkout ("api"). */
   name: string;
@@ -175,9 +181,14 @@ export interface JailState {
 }
 
 export type WorkerClientMsg =
-  /** With `issue`, the worker is there for that GitHub issue: it moves to In progress at once, is assigned on GitHub (which keeps it there) and taken off the queue. */
-  /** With `repos` (other floors' ids), the worker works in their repositories too, each in a worktree of its own (see WorkerInfo.repos). */
-  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; provider?: AgentProvider; model?: string; effort?: AgentEffort; issue?: number; repos?: string[]; via?: 'herald' }
+  /** With `issue`, the worker is there for that GitHub issue (in `issueRepo`, on a team floor): it moves to In progress at once, is assigned on GitHub (which keeps it there) and taken off the queue. */
+  /**
+   * With `repos` (see repoChoices), the worker works in those repositories, each in a worktree of its
+   * own (see WorkerInfo.repos): another floor's id for its project, or `<floor>/<folder>` for one of a
+   * team floor's repositories. On a team floor, a worker in its own worktree with no `repos` gets
+   * every repository of the floor.
+   */
+  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; provider?: AgentProvider; model?: string; effort?: AgentEffort; issue?: number; issueRepo?: string; repos?: string[]; via?: 'herald' }
   | { t: 'worker.resume'; workerId: string }
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup }
   /** Asks what the worker's worktree holds; answered with a `worker.worktree` message. */
@@ -187,7 +198,7 @@ export type WorkerClientMsg =
   | { t: 'worker.attach'; workerId: string }
   | { t: 'worker.detach'; workerId: string }
   /** With `issue`, the prompt hands the worker that GitHub issue, which is taken as for worker.spawn. */
-  | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number }
+  | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number; issueRepo?: string }
   /**
    * A prompt for the agent standing by a board (`deskId` is its kiosk, see STATIONS in layout). It's
    * typed into its session, which is woken up first if it's asleep, or hired there when nobody is.

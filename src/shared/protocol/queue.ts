@@ -14,6 +14,8 @@ export interface QueueTask {
   effort?: AgentEffort;
   /** The GitHub issue it came from, when it did. */
   issue?: number;
+  /** owner/name of the repository that issue is in, on a team floor (see GhIssue.repo). */
+  repo?: string;
   title: string;
   prompt: string;
   addedBy: string;
@@ -42,7 +44,7 @@ export interface QueueState {
 }
 
 export type QueueClientMsg =
-  | { t: 'queue.add'; prompt: string; title?: string; issue?: number; provider?: AgentProvider; model?: string; effort?: AgentEffort }
+  | { t: 'queue.add'; prompt: string; title?: string; issue?: number; repo?: string; provider?: AgentProvider; model?: string; effort?: AgentEffort }
   | { t: 'queue.remove'; taskId: string }
   /** Move a queued task up (-1) or down (+1) the queue. */
   | { t: 'queue.move'; taskId: string; delta: number }

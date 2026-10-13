@@ -1,5 +1,6 @@
 import './changes.css';
-import { changedImageType, type ChangedFile, type ChangesState, type ServerMsg } from '../../shared/protocol';
+import { changedImageType, type ChangedFile, type ChangesState, type ServerMsg, type WorkerInfo } from '../../shared/protocol';
+import { repoName } from '../../shared/floors';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, type Modal } from './dom';
@@ -106,8 +107,27 @@ function renderPreview(workerId: string, repo: string | undefined, f: ChangedFil
 }
 
 /**
- * The Changes window for a worker. A worker across repositories (see WorkerInfo.repos) gets a tab per
- * repository, its own floor's first; `repo` opens on another floor's one.
+ * The tabs of a worker's Changes window, one per repository, each by the `repo` the office follows it
+ * by: a worker across repositories (see WorkerInfo.repos) has its first worktree (no id) and each of
+ * its others (by name); a worker in a team floor's own folder, each of the floor's checkouts (by
+ * folder). Any other worker has the one checkout, and no tabs.
+ */
+function changeTabs(w: WorkerInfo): { id?: string; name: string; pr?: { number: number }; title: string }[] {
+  if (w.repos?.length) {
+    const own = w.worktree?.path.split(/[\\/]/).pop() ?? 'this project';
+    return [
+      { name: own, pr: w.pr, title: w.worktree?.repo ? `Its worktree of ${w.worktree.repo}` : `Its worktree of this floor's project, ${own}` },
+      ...w.repos.map((r) => ({ id: r.name, name: r.name, pr: r.pr, title: `Its worktree of ${r.repo ?? r.name}` })),
+    ];
+  }
+  const here = store.currentFloor();
+  if (w.worktree || !here?.team) return [];
+  return (here.repos ?? []).filter((r) => !r.cloning).map((r) => ({ id: r.path, name: repoName(r.repo), title: `The floor's checkout of ${r.repo}, which it works in` }));
+}
+
+/**
+ * The Changes window for a worker. A worker in several repositories gets a tab per repository (see
+ * changeTabs); `repo` opens on one of them.
  */
 export function openChanges(net: Net, workerId: string, onTerminal?: () => void, repo?: string) {
   if (current?.workerId === workerId) return current.show(repo);
@@ -345,18 +365,15 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     modal.close();
   });
 
-  /** Across repositories: a tab per repository, its own floor's first (no repo), each followed on its own. */
+  /** In several repositories: a tab per repository (see changeTabs), each followed on its own. */
   const renderTabs = () => {
-    const w = store.workers.get(workerId) ?? info;
-    const repos = w.repos ?? [];
-    tabs.classList.toggle('hidden', !repos.length);
-    if (!repos.length) return tabs.replaceChildren();
-    const own = w.worktree?.path.split(/[\\/]/).pop() ?? 'this project';
+    const list = changeTabs(store.workers.get(workerId) ?? info);
+    tabs.classList.toggle('hidden', !list.length);
     tabs.replaceChildren(
-      ...[{ id: undefined as string | undefined, name: own, pr: w.pr }, ...repos.map((r) => ({ id: r.floor as string | undefined, name: r.name, pr: r.pr }))].map((t) =>
+      ...list.map((t) =>
         h(
           'button.btn',
-          { type: 'button', role: 'tab', class: t.id === repo ? 'on' : '', 'aria-selected': t.id === repo ? 'true' : 'false', title: t.id ? `Its worktree of ${t.name}` : `Its worktree of this floor's project, ${t.name}`, onclick: () => show(t.id) },
+          { type: 'button', role: 'tab', class: t.id === repo ? 'on' : '', 'aria-selected': t.id === repo ? 'true' : 'false', title: t.title, onclick: () => show(t.id) },
           `📁 ${t.name}`,
           t.pr ? h('small', {}, ` · #${t.pr.number}`) : null,
         ),
@@ -366,7 +383,8 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
 
   /** Switches to another of its repositories: stops following the one on screen and follows that one. */
   const show = (next?: string) => {
-    if (next === repo || (next && !store.workers.get(workerId)?.repos?.some((r) => r.floor === next))) return;
+    const w = store.workers.get(workerId);
+    if (next === repo || !w || (next && !changeTabs(w).some((t) => t.id === next))) return;
     net.send({ t: 'changes.unwatch', workerId, repo });
     repo = next;
     state = null;
@@ -401,7 +419,9 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
   current = { workerId, repo: () => repo, show, modal };
   previous?.modal.close();
   closeBtn.addEventListener('click', () => modal.close());
-  if (repo && !info.repos?.some((r) => r.floor === repo)) repo = undefined;
+  // A tab it has, else its first: in a team floor's folder, that's one of the floor's checkouts.
+  const first = changeTabs(info);
+  if (!first.some((t) => t.id === repo)) repo = first[0]?.id;
   renderTabs();
   renderHeader();
   renderFooter();

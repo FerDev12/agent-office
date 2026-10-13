@@ -2,6 +2,7 @@ import type http from 'node:http';
 import { DESK_BY_ID } from '../../shared/layout.js';
 import type { Ctx } from '../office/context.js';
 import { str } from '../office/input.js';
+import { ghRef, normalizeRepo } from '../../shared/floors.js';
 import { readBody, send } from '../http/util.js';
 
 /**
@@ -19,7 +20,7 @@ export async function officeQueue(ctx: Ctx, req: http.IncomingMessage, res: http
     const q = floor.queue.state();
     return {
       maxWorkers: q.maxWorkers,
-      tasks: q.tasks.map((t) => ({ id: t.id, title: t.title, status: t.status, outcome: t.outcome, issue: t.issue, addedBy: t.addedBy, worker: t.workerName, branch: t.branch, pr: t.pr, error: t.error })),
+      tasks: q.tasks.map((t) => ({ id: t.id, title: t.title, status: t.status, outcome: t.outcome, issue: t.issue, repo: t.repo, addedBy: t.addedBy, worker: t.workerName, branch: t.branch, pr: t.pr, error: t.error })),
     };
   };
   if (req.method === 'GET') return send(res, 200, view());
@@ -28,7 +29,7 @@ export async function officeQueue(ctx: Ctx, req: http.IncomingMessage, res: http
     return err ? send(res, 400, { error: err }) : send(res, 200, view());
   }
   if (req.method !== 'POST') return send(res, 405, { error: 'GET, POST or DELETE' });
-  let body: { prompt?: unknown; title?: unknown; issue?: unknown };
+  let body: { prompt?: unknown; title?: unknown; issue?: unknown; repo?: unknown };
   try {
     body = JSON.parse(await readBody(req));
   } catch {
@@ -36,9 +37,12 @@ export async function officeQueue(ctx: Ctx, req: http.IncomingMessage, res: http
   }
   const issue = Number.isInteger(body?.issue) && (body.issue as number) > 0 ? (body.issue as number) : undefined;
   // Its tasks run as whoever the board agent runs as.
-  const err = floor.queue.add(str(body?.prompt, 20000), agent.name, str(body?.title, 200) || undefined, issue, undefined, undefined, undefined, floor.workers.ownerOf(agent.id));
+  // On a team floor an issue is one repository's: which, unless the floor has only the one.
+  const repo = issue === undefined ? undefined : (normalizeRepo(body?.repo) ?? floor.soleRepo);
+  if (issue !== undefined && floor.def.team && !repo) return send(res, 400, { error: `This floor has several repositories: say which the issue is in, as "repo": "owner/name" (office-queue add --issue owner/name#${issue})` });
+  const err = floor.queue.add(str(body?.prompt, 20000), agent.name, str(body?.title, 200) || undefined, issue, undefined, undefined, undefined, floor.workers.ownerOf(agent.id), repo);
   if (err) return send(res, 400, { error: err });
   const task = floor.queue.state().tasks.at(-1)!;
-  ctx.toastFloor(floor, `📋 The ${agent.name} queued ${issue !== undefined ? `issue #${issue}` : `“${task.title}”`}`);
+  ctx.toastFloor(floor, `📋 The ${agent.name} queued ${issue !== undefined ? `issue ${ghRef(issue, repo)}` : `“${task.title}”`}`);
   send(res, 200, { ok: true, task: { id: task.id, title: task.title, status: task.status } });
 }

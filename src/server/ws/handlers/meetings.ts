@@ -26,6 +26,7 @@ export const meetingHandlers = {
       parts: Array.isArray(msg.parts) ? msg.parts.slice(0, 200).map((p) => str(p, 500)) : undefined,
       pr: count(msg.pr),
       issue: count(msg.issue),
+      repo: str(msg.repo, 200) || undefined,
       rounds: count(msg.rounds),
       provider: msg.provider,
       model: msg.model === undefined ? undefined : str(msg.model, OPEN_CODE_MODEL_MAX + 1),

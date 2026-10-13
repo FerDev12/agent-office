@@ -71,6 +71,8 @@ export class WorkerManager {
   private saveTimer: NodeJS.Timeout;
   /** How many rows the floor's back office is built out: its desks past that aren't there to hire at (see WING). */
   wing: () => number = () => 0;
+  /** A team floor's repositories (see WorkerContext.team); unset on a project's own floor. */
+  team?: () => RepoSource[];
 
   constructor(
     private dir: string,
@@ -101,6 +103,8 @@ export class WorkerManager {
     this.ctx = {
       dir,
       trees: this.trees,
+      treesFor: (wt) => this.worktrees.treesFor(wt),
+      team: () => this.team?.(),
       workers: this.workers,
       events,
       prompts,
@@ -206,7 +210,10 @@ export class WorkerManager {
    * (see Worktrees.fetch). Undefined when there's nothing to wait for.
    */
   fetchBase(): Promise<void> | undefined {
-    return this.trees.fetch();
+    const team = this.team?.();
+    if (!team) return this.trees.fetch();
+    const all = team.map((r) => this.ctx.treesFor(r).fetch()).filter((p) => p !== undefined);
+    return all.length ? Promise.all(all).then(() => undefined) : undefined;
   }
 
   deskOccupied(deskId: string): boolean {
@@ -217,7 +224,7 @@ export class WorkerManager {
   /**
    * Hires a worker at a desk. `meeting` seats one at the meeting room's table instead, for that meeting
    * (see meetings.ts), in the meeting's own worktree, which everyone at the table shares. `repos` are
-   * other floors' repositories a worker in its own worktree works in too (see makeWorkspace).
+   * the repositories a worker in its own worktree works in (see WorkerTrees.make).
    */
   spawn(deskId: string, by: string, prompt?: string, worktree = false, kind: WorkerKind = 'agent', provider?: AgentProvider, model?: string, effort?: AgentEffort, meeting?: { id: string; worktree?: WorkerInfo['worktree'] }, owner?: string, repos: RepoSource[] = [], via?: 'herald'): WorkerInfo | string {
     // Nobody picked (a board agent, say): the office's default worker, model and effort included.
@@ -236,7 +243,7 @@ export class WorkerManager {
     if (!seat.room !== !meeting) return seat.room ? 'Only a meeting seats workers at the meeting table: call one in the meeting room' : 'A meeting seats its workers at the meeting table';
     if (meeting && (kind !== 'agent' || worktree)) return 'A meeting seats agents, in its own worktree';
     if (repos.length && (kind !== 'agent' || !worktree || seat.station || meeting)) return 'Only a worker in its own worktree can work in other repositories too';
-    if (repos.length > MAX_REPOS) return `A worker can take on at most ${MAX_REPOS} other repositories`;
+    if (repos.filter((r) => !r.checkout).length > MAX_REPOS) return `A worker can take on at most ${MAX_REPOS} other repositories`;
     if (kind === 'shell' && provider !== undefined) return 'Shell workers do not have an agent provider';
     if (kind === 'agent' && selectedProvider === 'custom' && this.defaultProvider !== 'custom') return 'Custom is not the configured agent provider';
     if (kind === 'agent') {
@@ -254,17 +261,10 @@ export class WorkerManager {
     let wt: WorkerInfo['worktree'] = meeting?.worktree;
     let others: WorkerRepo[] | undefined;
     if (worktree) {
-      const slug = `${name.toLowerCase()}-${id.slice(0, 4)}`;
-      const made = repos.length ? this.makeWorkspace(slug, repos) : this.trees.create(slug);
+      const made = this.worktrees.make(`${name.toLowerCase()}-${id.slice(0, 4)}`, repos);
       if (typeof made === 'string') return made;
-      if ('repos' in made) {
-        ({ worktree: wt, repos: others } = made);
-        for (const note of made.notes) this.events.toast(`🌿 ${name}'s worktree of ${note}`, 'info');
-      } else {
-        const { note, ...ref } = made;
-        wt = ref;
-        if (note) this.events.toast(`🌿 ${name}'s worktree ${note}`, 'info');
-      }
+      ({ worktree: wt, repos: others } = made);
+      for (const note of made.notes) this.events.toast(`🌿 ${name}'s worktree ${note}`, 'info');
     }
     const info: WorkerInfo = {
       id,
@@ -298,11 +298,6 @@ export class WorkerManager {
     this.launch(w, seat.station && info.prompt ? `${stationBrief(seat.station, this.prompts)}\n\n${info.prompt}` : info.prompt, undefined);
     this.persist();
     return info;
-  }
-
-  /** The workspace of a worker across repositories (see WorkerTrees.makeWorkspace). */
-  private makeWorkspace(slug: string, repos: RepoSource[]): { worktree: NonNullable<WorkerInfo['worktree']>; repos: WorkerRepo[]; notes: string[] } | string {
-    return this.worktrees.makeWorkspace(slug, repos);
   }
 
   /** Starts a worker that isn't running again, carrying on its session, with `prompt` as its next message. */
@@ -684,9 +679,9 @@ export class WorkerManager {
       env[key] = [this.officeBin, env[key]].filter(Boolean).join(path.delimiter);
     }
 
-    // A workspace isn't a repository, but it's inside this floor's checkout: git run in it must not
-    // find that checkout (and switch its branch, say) instead of saying it's no repository.
-    if (info.repos?.length) env.GIT_CEILING_DIRECTORIES = [path.dirname(cwd), env.GIT_CEILING_DIRECTORIES].filter(Boolean).join(path.delimiter);
+    // A workspace (or a team floor's folder) isn't a repository, but may be inside one: git run in it
+    // must not find that checkout (and switch its branch, say) instead of saying it's no repository.
+    if (info.repos?.length || this.team) env.GIT_CEILING_DIRECTORIES = [path.dirname(cwd), env.GIT_CEILING_DIRECTORIES].filter(Boolean).join(path.delimiter);
     if (w.owner && this.runAs) {
       if (adapter?.signIn && !this.runAs.claudeReady(w.owner)) {
         this.startFailed(w, `whoever hired ${info.name} (${info.createdBy}) isn't signed in to Claude — they can sign in under ☰ → 🔐 Your sign-ins, then press R here`);

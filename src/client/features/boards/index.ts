@@ -55,19 +55,19 @@ export function installBoards(ctx: Ctx, deps: BoardsDeps) {
     mat.map = texture;
     mat.needsUpdate = true;
   }
-  /** Issues whose cards someone on this floor is carrying around, so they're missing from the board. */
-  function offBoard(): Set<number> {
-    const off = new Set<number>();
+  /** Issues whose cards someone on this floor is carrying around, so they're missing from the board ("repo#n" on a team floor). */
+  function offBoard(): Set<string> {
+    const off = new Set<string>();
     const carrying = ctx.carrying();
-    if (carrying) off.add(carrying.issue);
-    for (const p of store.peers.values()) if (p.carrying && p.id !== store.you && store.onMyFloor(p)) off.add(p.carrying.issue);
+    if (carrying) off.add(cardKey(carrying.issue, carrying.repo));
+    for (const p of store.peers.values()) if (p.carrying && p.id !== store.you && store.onMyFloor(p)) off.add(cardKey(p.carrying.issue, p.carrying.repo));
     return off;
   }
   const issuesTex = new BoardTexture('issues');
   // The cork holds the issues nobody has started on: one that's in progress comes off it, as a closed one does.
   const renderIssuesBoard = () => {
     const off = offBoard();
-    issuesTex.render({ ...store.issues, items: store.issues.items.filter((i) => !off.has(i.number) && !inProgress(i, store.taskForIssue(i.number))) });
+    issuesTex.render({ ...store.issues, items: store.issues.items.filter((i) => !off.has(cardKey(i.number, i.repo)) && !inProgress(i, store.taskForIssue(i.number, i.repo))) });
   };
   // The queue too: a task that starts running takes its issue off the board before GitHub says it's assigned.
   mountBoard(office.boardMeshes.issues, issuesTex.texture, renderIssuesBoard, ['issues', 'queue']);
@@ -151,4 +151,9 @@ export function installBoards(ctx: Ctx, deps: BoardsDeps) {
   }
 
   return { issuesTex, renderPullsBoard, renderServicesBoard, renderQueueBoard, dressBoards, cardMoved };
+}
+
+/** An issue's card, by its number and, on a team floor, its repository. */
+function cardKey(n: number, repo?: string): string {
+  return `${repo?.toLowerCase() ?? ''}#${n}`;
 }

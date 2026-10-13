@@ -7,6 +7,7 @@ import { nextFreeSeat } from '../../shared/layout.js';
 import type { WorkerInfo } from '../../shared/protocol.js';
 import type { Ctx } from '../office/context.js';
 import { str } from '../office/input.js';
+import { ghRef, sameGh, sameRepo } from '../../shared/floors.js';
 import { readBody, send } from '../http/util.js';
 
 /**
@@ -16,11 +17,16 @@ import { readBody, send } from '../http/util.js';
 async function pullOf(floor: Floor, n: number, repo?: string): Promise<{ number: number; url: string } | string> {
   const here = floor.def.repo;
   if (repo && here && repo.toLowerCase() !== here.toLowerCase()) return `That pull request is in ${repo}, and this floor is ${here}`;
-  const listed = floor.github.pulls.items.find((p) => p.number === n);
+  // A team floor's: one of its repositories', which a number alone doesn't say unless it has just the one.
+  const team = floor.def.team ? (floor.def.repos ?? []).map((r) => r.repo) : undefined;
+  if (team && repo && !team.some((r) => sameRepo(r, repo))) return `That pull request is in ${repo}, which isn't one of ${floor.def.name}'s repositories (${team.join(', ') || 'it has none'})`;
+  if (team && !repo && team.length !== 1) return `${floor.def.name} has ${team.length ? 'several repositories' : 'no repositories'}: give the pull request's URL`;
+  repo ??= team?.[0];
+  const listed = floor.github.pulls.items.find((p) => sameGh(p, n, repo));
   let pr: { url: string; state: string } | undefined = listed;
   if (!pr) {
     try {
-      pr = JSON.parse(await gh(['pr', 'view', String(n), '--json', 'url,state'], floor.dir)) as { url: string; state: string };
+      pr = JSON.parse(await gh(['pr', 'view', String(n), ...(team ? ['-R', repo!] : []), '--json', 'url,state'], floor.dir)) as { url: string; state: string };
     } catch (err) {
       return `No pull request #${n} here: ${(err as Error).message}`;
     }
@@ -55,7 +61,7 @@ export async function officeWorkers(ctx: Ctx, req: http.IncomingMessage, res: ht
     const list = floor.workers.list();
     const free = nextFreeSeat((id) => floor.workers.deskOccupied(id), floor.plan.wing);
     return send(res, 200, {
-      floor: { id: floor.id, name: floor.def.name, repo: floor.def.repo, branch: floor.project.branch },
+      floor: { id: floor.id, name: floor.def.name, repo: floor.def.repo, branch: floor.project.branch, ...(floor.def.team ? { team: true, repos: (floor.def.repos ?? []).map((r) => r.repo) } : {}) },
       you: me.id,
       leaveOnMerge: ctx.leaveOnMerge.on,
       providers: floor.project.agentProviders,
@@ -148,21 +154,25 @@ export async function officeWorkers(ctx: Ctx, req: http.IncomingMessage, res: ht
   if (!desk) return send(res, 409, { error: 'Every desk and bean bag is taken: send someone home first' });
   // A model or effort is the office's default worker's unless it says whose.
   const provider = ask.provider ?? (ask.model || ask.effort ? floor.workers.officeDefault.provider : undefined);
-  const worktree = ask.worktree ?? !!floor.project.branch;
+  const worktree = ask.worktree ?? (floor.def.team ? !!floor.def.repos?.length : !!floor.project.branch);
+  // On a team floor an issue is one repository's, and its worker works in that one.
+  const repo = ask.issue ? ask.repo ?? floor.soleRepo : undefined;
+  if (ask.issue && floor.def.team && !repo) return send(res, 400, { error: `${floor.def.name} has several repositories: say which the issue is in (repo: owner/name, or --issue owner/name#${ask.issue})` });
+  const repos = repo && worktree ? (floor.workers.team?.() ?? []).filter((r) => sameRepo(r.repo, repo)) : [];
   // Its worktree starts from what's on GitHub now, like one hired from a desk.
   if (worktree) await floor.workers.fetchBase();
   if (!ctx.floors.has(floor.id)) return send(res, 410, { error: 'This floor closed' });
   // It runs as whoever the asking worker runs as.
   const owner = floor.workers.ownerOf(me.id);
-  const r = floor.workers.spawn(desk, who, ask.prompt, worktree, 'agent', provider, ask.model, ask.effort, undefined, owner);
+  const r = floor.workers.spawn(desk, who, ask.prompt, worktree, 'agent', provider, ask.model, ask.effort, undefined, owner, repos);
   if (typeof r === 'string') return send(res, 400, { error: r });
-  ctx.toastFloor(floor, `${who} hired ${r.name}${ask.issue ? ` for issue #${ask.issue}` : ' with a task'}`);
+  ctx.toastFloor(floor, `${who} hired ${r.name}${ask.issue ? ` for issue ${ghRef(ask.issue, repo)}` : ' with a task'}`);
   if (ask.issue) {
     const n = ask.issue;
-    floor.queue.dropIssue(n);
+    floor.queue.dropIssue(n, repo);
     const as = owner ? ctx.signins.ghAs(owner) : undefined;
-    if (typeof as === 'string') ctx.toastFloor(floor, `Couldn't assign issue #${n} on GitHub: ${as}`, 'warn');
-    else void floor.github.claim(n, as).then((e) => e && ctx.toastFloor(floor, `Couldn't assign issue #${n} on GitHub: ${e}`, 'warn'));
+    if (typeof as === 'string') ctx.toastFloor(floor, `Couldn't assign issue ${ghRef(n, repo)} on GitHub: ${as}`, 'warn');
+    else void floor.github.claim(n, as, repo).then((e) => e && ctx.toastFloor(floor, `Couldn't assign issue ${ghRef(n, repo)} on GitHub: ${e}`, 'warn'));
   }
   send(res, 200, { ok: true, worker: row(r.id) });
 }

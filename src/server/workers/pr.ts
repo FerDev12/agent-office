@@ -3,6 +3,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkerInfo } from '../../shared/protocol.js';
+import { repoOfUrl } from '../../shared/floors.js';
 import { DESK_BY_ID } from '../../shared/layout.js';
 import { isBusy } from '../../shared/status.js';
 import { gh } from '../github.js';
@@ -111,12 +112,16 @@ export class WorkerPrs {
     if (!pr) return;
     const { info } = w;
     const same = (repo?: string) => repo?.toLowerCase() === pr.repo.toLowerCase();
-    this.origin ??= { repo: originRepo(this.ctx.dir) };
-    const other = same(this.origin.repo) ? undefined : info.repos?.find((r) => same(r.repo));
-    if (!same(this.origin.repo) && !other) return;
-    if ((other ?? info).pr?.number === pr.number) return;
-    // The one it had may still be open (a second task, a follow-up): it stays its own too.
-    if (!other && info.pr) info.pastPrs = [...new Set([...(info.pastPrs ?? []), info.pr.number])].filter((n) => n !== pr.number).slice(-MAX_PAST_PRS);
+    // On a team floor, any of its repositories is the worker's own, its worktree's first.
+    const team = this.ctx.team();
+    const home = team ? info.worktree?.repo : (this.origin ??= { repo: originRepo(this.ctx.dir) }).repo;
+    const other = same(home) ? undefined : info.repos?.find((r) => same(r.repo));
+    if (!other && !same(home) && !team?.some((t) => same(t.repo))) return;
+    if ((other ?? info).pr?.url === pr.url) return;
+    // The one it had may still be open (a second task, a follow-up): it stays its own too, as long as
+    // it's in the same repository (its number says which only there, see workerPr).
+    if (!other && info.pr && same(repoOfUrl(info.pr.url) ?? pr.repo)) info.pastPrs = [...new Set([...(info.pastPrs ?? []), info.pr.number])].filter((n) => n !== pr.number).slice(-MAX_PAST_PRS);
+    else if (!other && info.pr) info.pastPrs = undefined;
     (other ?? info).pr = { number: pr.number, url: pr.url };
     this.ctx.persist();
     this.ctx.emit(w);
@@ -175,7 +180,7 @@ export class WorkerPrs {
         return { prs: [{ ...open, existed: true, dirty }], failed: [] };
       }
       await run('git', ['push', '-u', 'origin', branch], cwd, 90_000, as?.env);
-      const base = await this.pushedBranch([wt.from, this.ctx.trees.currentBranch()], branch);
+      const base = await this.pushedBranch([wt.from, this.ctx.treesFor(wt).currentBranch()], branch, wt.checkout ? path.join(this.ctx.dir, wt.checkout) : this.ctx.dir);
       const { title, body } = draftPr(info, commits, by);
       const { number, url } = await createPr(branch, base, title, body, cwd, as);
       info.pr = { number, url };
@@ -199,9 +204,9 @@ export class WorkerPrs {
   private async openPrs(w: Worker, by: string, as?: GhAs): Promise<{ prs: OpenedPr[]; failed: string[] } | string> {
     const { info } = w;
     const wt = info.worktree!;
-    const home = originRepo(this.ctx.dir);
+    const home = wt.repo ?? originRepo(this.ctx.dir);
     const parts = [
-      { name: path.basename(wt.path), dir: this.ctx.dir, ...wt, pr: info.pr, own: true, set: (pr: { number: number; url: string }) => (info.pr = pr) },
+      { name: path.basename(wt.path), dir: wt.checkout ? path.join(this.ctx.dir, wt.checkout) : this.ctx.dir, ...wt, pr: info.pr, own: true, set: (pr: { number: number; url: string }) => (info.pr = pr) },
       ...info.repos!.map((r) => ({ ...r, own: false, set: (pr: { number: number; url: string }) => (r.pr = pr) })),
     ];
     const gone = parts.filter((p) => !existsSync(path.join(this.ctx.dir, p.path)));
