@@ -18,10 +18,11 @@ export interface Site {
   readonly interactables: Interactable[];
   /**
    * Marks a stretch of wall `w` wide and `h` high, centered `u` along it and `y` up, as taken (a board,
-   * a window, a door), so pictures don't hang over it (see Office.fixtures). With `when`, only while
-   * that says so (something only some floors' themes put up).
+   * a window, a door), so pictures don't hang over it (see Office.fixtures). What it hands back takes
+   * that stretch off the list and puts it back, for something that's only up some of the time (a
+   * floor theme's dressing).
    */
-  wall(wall: WallId, u: number, y: number, w: number, h: number, when?: () => boolean): void;
+  wall(wall: WallId, u: number, y: number, w: number, h: number): (taken: boolean) => void;
   /** What each floor paints its own way (see Office.setLook). */
   readonly looks: Looks;
   /** The floor's planks, which the back office's floor is laid with too. */

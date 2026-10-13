@@ -17,6 +17,8 @@ export interface FloorPalette {
   seam: string;
   /** What the floor is laid with: planks, unless it says otherwise. */
   surface?: 'planks' | 'concrete';
+  /** One color for each kind of furniture, instead of the office's own mix (see Looks.paint). */
+  furniture?: { desk?: string; chair?: string; rug?: string };
   /** A brand's own dressing, put up on the office floor while it's painted in this (see features/floortheme). */
   brand?: 'vtwo';
   /** Never handed out to a new floor by itself: an admin picks it from ☰ → Floor theme. */
@@ -40,7 +42,8 @@ export const FLOOR_PALETTES: FloorPalette[] = [
   { name: 'Rose', wall: '#ffeaf0', trim: '#e0567f', floor: '#eed3da', floorAlt: '#e4c1cb', seam: '#cea5b2' },
   { name: 'Teal', wall: '#e1f7f6', trim: '#1a9a9a', floor: '#c3e2de', floorAlt: '#b0d7d2', seam: '#92c3bd' },
   // Raw concrete, black trim and polished concrete underfoot, with VTwo's lit V and purple light.
-  { name: 'VTwo', wall: '#8a8c90', trim: '#1c1b20', floor: '#959596', floorAlt: '#8a8a8c', seam: '#77777a', surface: 'concrete', brand: 'vtwo', pickOnly: true },
+  { name: 'VTwo', wall: '#8a8c90', trim: '#1c1b20', floor: '#959596', floorAlt: '#8a8a8c', seam: '#77777a', surface: 'concrete', brand: 'vtwo', pickOnly: true,
+    furniture: { desk: '#6b4a35', chair: '#26252b', rug: '#56555c' } },
 ];
 
 /** The themes a new floor can be handed by itself, by index into FLOOR_PALETTES. */

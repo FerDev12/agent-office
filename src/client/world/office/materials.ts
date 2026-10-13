@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { FLOOR, WALL_T, type Side } from '../../../shared/layout';
 import { FLOOR_PALETTES, type FloorPalette } from '../../../shared/floors';
-import { mesh } from '../toon';
+import { mesh, toon, toonUnique } from '../toon';
 
 // What the office is painted and glazed with, the planks of its floors, and where on an outside wall a
 // window or a door goes.
@@ -169,9 +169,31 @@ export function box(w: number, h: number, d: number) {
   return new THREE.BoxGeometry(w, h, d);
 }
 
+/** The kinds of furniture a floor's theme can recolor (FloorPalette.furniture). */
+export type FurnitureRole = keyof NonNullable<FloorPalette['furniture']>;
+/** A material for a piece of furniture of kind `role` in `color`. */
+export type Paint = (role: FurnitureRole, color: string) => THREE.Material;
+/** Furniture no theme recolors, like the lab's. */
+export const plainPaint: Paint = (_role, color) => toon(color);
+
 /** The materials and textures a floor paints in its own colors. */
 export interface Looks {
   wall: THREE.MeshToonMaterial;
   trim: THREE.MeshToonMaterial;
   planks: THREE.CanvasTexture[];
+  /** The desks, chairs, mugs and rugs: one material of their own per kind and color, which Office.setLook recolors. */
+  paint: Paint;
+  /** Every material `paint` has made, with the kind and color it was made for. */
+  furniture: { role: FurnitureRole; color: string; mat: THREE.MeshToonMaterial }[];
+}
+
+/** A `paint` that makes each kind and color's material once and keeps it in `made`. */
+export function furniturePaint(made: Looks['furniture']): Paint {
+  return (role, color) => {
+    const hit = made.find((f) => f.role === role && f.color === color);
+    if (hit) return hit.mat;
+    const mat = toonUnique(color);
+    made.push({ role, color, mat });
+    return mat;
+  };
 }

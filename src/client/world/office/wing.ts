@@ -79,14 +79,14 @@ export function buildWing(group: THREE.Group, colliders: Collider[], interactabl
     const row = i + 1;
     const z = wingRowZ(row);
     const extras = new THREE.Group();
-    extras.add(mesh(roundedBox(3.4, 0.02, WING.row - 1, 0.5), toon(PALETTE.rugs[(row + 1) % PALETTE.rugs.length]), midX, 0.011, z, false));
+    extras.add(mesh(roundedBox(3.4, 0.02, WING.row - 1, 0.5), looks.paint('rug', PALETTE.rugs[(row + 1) % PALETTE.rugs.length]), midX, 0.011, z, false));
     const lamp = pendant(WALL_HEIGHT - 4.05);
     lamp.position.set(midX, 4.05, z);
     extras.add(lamp);
     extras.visible = false;
     group.add(extras);
     const seats = WING_DESKS.filter((d) => d.wing === row).map((def) => {
-      const view = buildDesk(def, DESKS.length + WING_DESKS.indexOf(def), trimMat);
+      const view = buildDesk(def, DESKS.length + WING_DESKS.indexOf(def), trimMat, looks.paint);
       view.group.visible = false;
       group.add(view.group);
       desks.set(def.id, view);

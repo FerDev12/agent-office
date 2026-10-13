@@ -15,9 +15,8 @@ function swatch(p: FloorPalette): HTMLElement {
 
 /** 🎨 Floor theme, for admins: how the floor you're on is painted, for everyone on it. */
 export function openFloorTheme(net: Net) {
-  const close = h('button.btn.close', { type: 'button', 'aria-label': 'Close', title: 'Close (Esc)' }, '✕');
   const body = h('div.body.floor-theme');
-  const el = h('div.modal', { role: 'dialog', 'aria-label': 'Floor theme', style: 'width:min(620px,100%)' }, h('header', {}, h('h2', {}, '🎨 Floor theme'), close), body);
+  const el = h('div.modal', { role: 'dialog', 'aria-label': 'Floor theme', style: 'width:min(620px,100%)' }, h('header', {}, h('h2', {}, '🎨 Floor theme')), body);
 
   const render = () => {
     const floor = store.currentFloor();
@@ -50,7 +49,7 @@ export function openFloorTheme(net: Net) {
 
   // No longer an admin (someone changed your role): it isn't yours to change any more.
   const unsubs = [store.on('floors', render), store.on('floor', render), store.on('me', () => (store.me.admin ? render() : modal.close()))];
+  // Its ✕ is the one openModal puts in the header.
   const modal = openModal(el, { onClose: () => unsubs.forEach((u) => u()) });
-  close.addEventListener('click', () => modal.close());
   render();
 }

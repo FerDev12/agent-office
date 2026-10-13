@@ -13,6 +13,7 @@ export const floorThemeHandlers = {
     const who = c.peer.name;
     console.log(`  ${who} painted the ${r.name} floor in ${floorPalette(r.palette).name}`);
     ctx.floorsChanged();
-    ctx.toastAll(`🎨 ${who} gave the ${r.name} floor the ${floorPalette(r.palette).name} theme`);
+    // Only the people on it see the change; everyone else sees its new colors in the elevator.
+    ctx.toastFloor(ctx.floors.get(r.id), `🎨 ${who} gave the ${r.name} floor the ${floorPalette(r.palette).name} theme`);
   },
 } satisfies HandlerMap<FloorThemeClientMsg>;

@@ -19,7 +19,7 @@ import { hoop } from '../../features/basketball/world';
 import { kitchen } from '../kitchen';
 import { signs } from '../desksigns';
 import type { Collider, DeskView, Interactable, Office, OfficeHandles } from '../types';
-import { PALETTE, floorTexture, paintPlanks, type Looks } from './materials';
+import { PALETTE, floorTexture, furniturePaint, paintPlanks, type Looks } from './materials';
 import { boards, clearOfStairs, lamps, lounge, machineMonitor, nightLights, plants, rugs, tv } from './room';
 import { plug, walls, type Door } from './shell';
 import { balcony } from './balcony';
@@ -86,9 +86,10 @@ export function buildOffice(): Office {
   const group = new THREE.Group();
   const colliders: Collider[] = [];
   const interactables: Interactable[] = [];
-  const walls: { rect: WallRect; when?: () => boolean }[] = [];
+  const walls: WallRect[] = [];
   // What each floor paints its own way (see setLook): the walls, their trim, the planks.
-  const looks: Looks = { wall: toonUnique(PALETTE.wall), trim: toonUnique(PALETTE.wallTrim), planks: [] };
+  const furniture: Looks['furniture'] = [];
+  const looks: Looks = { wall: toonUnique(PALETTE.wall), trim: toonUnique(PALETTE.wallTrim), planks: [], paint: furniturePaint(furniture), furniture };
   // The floor's planks, which the stack lays the floor with (and the back office its own).
   const floorTex = floorTexture();
   looks.planks.push(floorTex);
@@ -101,7 +102,15 @@ export function buildOffice(): Office {
     group,
     colliders,
     interactables,
-    wall: (wall, u, y, w, h, when) => void walls.push({ rect: { wall, u0: u - w / 2, u1: u + w / 2, y0: y - h / 2, y1: y + h / 2 }, when }),
+    wall: (wall, u, y, w, h) => {
+      const rect: WallRect = { wall, u0: u - w / 2, u1: u + w / 2, y0: y - h / 2, y1: y + h / 2 };
+      walls.push(rect);
+      return (taken) => {
+        const i = walls.indexOf(rect);
+        if (taken && i < 0) walls.push(rect);
+        else if (!taken && i >= 0) walls.splice(i, 1);
+      };
+    },
     looks,
     planks,
     desks,
@@ -139,6 +148,7 @@ export function buildOffice(): Office {
       paintPlanks(t.image as HTMLCanvasElement, p);
       t.needsUpdate = true;
     }
+    for (const f of looks.furniture) f.mat.color.set(p.furniture?.[f.role] ?? f.color);
     for (const look of lookers) look(p);
   };
 
@@ -165,5 +175,5 @@ export function buildOffice(): Office {
     for (const u of updates) u(t, dt);
   };
 
-  return { ...(given as OfficeHandles), group, colliders, interactables, desks, fixtures: () => walls.filter((w) => w.when?.() ?? true).map((w) => w.rect), setLook, setLevel, update };
+  return { ...(given as OfficeHandles), group, colliders, interactables, desks, fixtures: () => walls, setLook, setLevel, update };
 }

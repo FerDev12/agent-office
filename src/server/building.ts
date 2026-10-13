@@ -417,7 +417,7 @@ export class Building {
           name: typeof s.name === 'string' && s.name ? s.name.slice(0, 100) : path.basename(s.dir),
           repo: normalizeRepo(s.repo),
           dir: s.dir,
-          palette: Number.isInteger(s.palette) && (s.palette as number) >= 0 ? (s.palette as number) : 0,
+          palette: isPalette(s.palette) ? s.palette : 0,
           addedBy: typeof s.addedBy === 'string' ? s.addedBy : '?',
           addedAt: typeof s.addedAt === 'number' ? s.addedAt : Date.now(),
         });

@@ -10,6 +10,7 @@ import type { Ctx } from '../src/server/office/context.js';
 import type { Client } from '../src/server/office/client.js';
 import { floorThemeHandlers } from '../src/server/ws/handlers/floortheme.js';
 import { AUTO_PALETTES, FLOOR_PALETTES, isPalette } from '../src/shared/floors.js';
+import { uncut } from '../src/client/features/floortheme/world.js';
 
 const VTWO = FLOOR_PALETTES.findIndex((p) => p.brand === 'vtwo');
 
@@ -65,21 +66,30 @@ test('a floor is repainted and stays that way after a restart; unknown floors an
   assert.equal(savedPalette(dataDir, 'p0'), 0);
 });
 
+test('a theme floors.json names that there is none of is read as the first, not wrapped round onto another', (t) => {
+  const { root, dataDir } = office(t, [VTWO, FLOOR_PALETTES.length, FLOOR_PALETTES.length + VTWO, -2]);
+  const palettes = new Building(dataDir, root).list().map((d) => d.palette);
+  assert.deepEqual(palettes, [VTWO, 0, 0, 0]);
+});
+
 /** Just enough of the office's context for the handler: who's an admin, the building, and what it says. */
 function fakeCtx(building: Building, admin: boolean) {
-  const said = { warned: [] as (string | undefined)[], toasts: [] as string[], floorsChanged: 0 };
+  const said = { warned: [] as (string | undefined)[], toasts: [] as { floor: unknown; text: string }[], floorsChanged: 0 };
+  const floor = { id: 'p0' };
   const ctx = {
     building,
+    floors: new Map([['p0', floor]]),
     meOf: () => ({ admin }),
     warn: (_c: Client, error: string | undefined) => void said.warned.push(error),
-    toastAll: (text: string) => void said.toasts.push(text),
+    toastAll: () => assert.fail('a floor’s theme is news for that floor, not the whole building'),
+    toastFloor: (f: unknown, text: string) => void said.toasts.push({ floor: f, text }),
     floorsChanged: () => void said.floorsChanged++,
   } as unknown as Ctx;
   const c = { accountId: 'acc', peer: { name: 'Sam' } } as unknown as Client;
-  return { ctx, c, said };
+  return { ctx, c, said, floor };
 }
 
-test('only admins change a floor’s theme, and everyone hears it in the next list of floors', (t) => {
+test('only admins change a floor’s theme; the floor hears who did, and everyone gets the next list of floors', (t) => {
   const { root, dataDir } = office(t, [0]);
   const building = new Building(dataDir, root);
 
@@ -94,10 +104,21 @@ test('only admins change a floor’s theme, and everyone hears it in the next li
   assert.deepEqual(admin.said.warned, []);
   assert.equal(admin.said.floorsChanged, 1);
   assert.equal(savedPalette(dataDir, 'p0'), VTWO);
-  assert.match(admin.said.toasts[0], /Sam gave the p0 floor the VTwo theme/);
+  assert.equal(admin.said.toasts[0].floor, admin.floor);
+  assert.match(admin.said.toasts[0].text, /Sam gave the p0 floor the VTwo theme/);
 
   // A theme that isn't one is turned away with why.
   floorThemeHandlers['floor.theme'](admin.ctx, admin.c, { t: 'floor.theme', floor: 'p0', palette: 99 });
   assert.deepEqual(admin.said.warned, ['No such theme']);
   assert.equal(savedPalette(dataDir, 'p0'), VTWO);
+});
+
+test('the line of light stops either side of what hangs across it', () => {
+  assert.deepEqual(uncut(0, 10, []), [[0, 10]]);
+  assert.deepEqual(uncut(0, 10, [[2, 3], [6, 7]]), [[0, 2], [3, 6], [7, 10]]);
+  // Past either end, or over the whole of it.
+  assert.deepEqual(uncut(0, 10, [[-1, 1], [9, 12]]), [[1, 9]]);
+  assert.deepEqual(uncut(0, 10, [[-1, 11]]), []);
+  // Slivers left between two pictures aren't worth a light.
+  assert.deepEqual(uncut(0, 10, [[2, 3], [3.05, 4]]), [[0, 2], [4, 10]]);
 });
