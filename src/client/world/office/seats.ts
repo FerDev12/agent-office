@@ -4,7 +4,7 @@ import { deskPoint } from '../../../shared/nav';
 import { mesh, roundedBox, textPlane, toon } from '../toon';
 import type { Collider, DeskView, Interactable } from '../types';
 import type { Fixture } from './fixture';
-import { PALETTE, box } from './materials';
+import { PALETTE, box, plainPaint, type Paint } from './materials';
 import { deskBooks, deskMug, plant } from './props';
 
 // Where people sit: the seats you use (see SEATING), and the desks, bean bags and board agents' kiosks
@@ -18,9 +18,9 @@ export function seatable(obj: THREE.Object3D, seatId: string, radius: number, in
   obj.userData.interact = it;
 }
 
-export function chair(color: string): THREE.Group {
+export function chair(color: string, paint: Paint = plainPaint): THREE.Group {
   const g = new THREE.Group();
-  const mat = toon(color);
+  const mat = paint('chair', color);
   g.add(mesh(roundedBox(0.62, 0.1, 0.58, 0.12), mat, 0, 0.5, 0));
   const back = mesh(roundedBox(0.62, 0.1, 0.6, 0.12), mat, 0, 0.86, 0.27);
   back.rotation.x = Math.PI / 2 - 0.12;
@@ -39,12 +39,12 @@ export function chair(color: string): THREE.Group {
  * The `index`th desk (of DESKS) at `def`: its top, legs and modesty panel (in `trimMat`), its knick-knack,
  * its chair, and the anchors its worker and laptop go in.
  */
-export function buildDesk(def: DeskDef, index: number, trimMat: THREE.Material): DeskView {
+export function buildDesk(def: DeskDef, index: number, trimMat: THREE.Material, paint: Paint = plainPaint): DeskView {
   const group = new THREE.Group();
   group.position.set(def.x, 0, def.z);
   group.rotation.y = def.rotY;
   const { width, depth, height } = DESK_SIZE;
-  group.add(mesh(roundedBox(width - 0.06, 0.08, depth - 0.04, 0.08), toon(PALETTE.desk), 0, height - 0.04, 0));
+  group.add(mesh(roundedBox(width - 0.06, 0.08, depth - 0.04, 0.08), paint('desk', PALETTE.desk), 0, height - 0.04, 0));
   const legMat = toon('#8d99ae');
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
@@ -58,7 +58,7 @@ export function buildDesk(def: DeskDef, index: number, trimMat: THREE.Material):
   const deco = index % 3;
   if (deco === 0) {
     // In the chair's color.
-    const mug = deskMug(PALETTE.chairs[index % 6]);
+    const mug = deskMug(PALETTE.chairs[index % 6], paint('chair', PALETTE.chairs[index % 6]));
     mug.position.set(width / 2 - 0.25, height, -0.2);
     group.add(mug);
   } else if (deco === 1) {
@@ -89,7 +89,7 @@ export function buildDesk(def: DeskDef, index: number, trimMat: THREE.Material):
   stage.position.set(0.72, height - 0.07, 0.18);
   group.add(stage);
 
-  const ch = chair(PALETTE.chairs[index % PALETTE.chairs.length]);
+  const ch = chair(PALETTE.chairs[index % PALETTE.chairs.length], paint);
   ch.position.set(0, 0, 0.9);
   group.add(ch);
 
@@ -224,7 +224,7 @@ declare module '../types' {
 /** The desks, each with its chair, and what's on it. */
 export const desks: Fixture = (site) => {
   DESKS.forEach((def, i) => {
-    const view = buildDesk(def, i, site.looks.trim);
+    const view = buildDesk(def, i, site.looks.trim, site.looks.paint);
     site.group.add(view.group);
     site.desks.set(def.id, view);
     const hw = DESK_SIZE.width / 2 - 0.05;

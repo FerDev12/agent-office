@@ -11,6 +11,7 @@ import { jukebox } from '../../features/jukebox/world';
 import { bookshelf } from '../../features/bookshelf/world';
 import { cabinet } from '../../features/cabinet/world';
 import { whiteboard } from '../../features/whiteboard/world';
+import { vtwo } from '../../features/floortheme/world';
 import { green, tee } from '../../features/golf/world';
 import { stack } from '../stack';
 import { tower } from '../tower';
@@ -18,7 +19,7 @@ import { hoop } from '../../features/basketball/world';
 import { kitchen } from '../kitchen';
 import { signs } from '../desksigns';
 import type { Collider, DeskView, Interactable, Office, OfficeHandles } from '../types';
-import { PALETTE, floorTexture, paintPlanks, type Looks } from './materials';
+import { PALETTE, floorTexture, furniturePaint, paintPlanks, type Looks } from './materials';
 import { boards, clearOfStairs, lamps, lounge, machineMonitor, nightLights, plants, rugs, tv } from './room';
 import { plug, walls, type Door } from './shell';
 import { balcony } from './balcony';
@@ -71,6 +72,8 @@ function floorPlan() {
     gong,
     hoop,
     whiteboard,
+    // A theme's own dressing, up while the floor's painted in it.
+    vtwo,
     clearOfStairs,
   ] as const;
 }
@@ -85,7 +88,8 @@ export function buildOffice(): Office {
   const interactables: Interactable[] = [];
   const walls: WallRect[] = [];
   // What each floor paints its own way (see setLook): the walls, their trim, the planks.
-  const looks: Looks = { wall: toonUnique(PALETTE.wall), trim: toonUnique(PALETTE.wallTrim), planks: [] };
+  const furniture: Looks['furniture'] = [];
+  const looks: Looks = { wall: toonUnique(PALETTE.wall), trim: toonUnique(PALETTE.wallTrim), planks: [], paint: furniturePaint(furniture), furniture };
   // The floor's planks, which the stack lays the floor with (and the back office its own).
   const floorTex = floorTexture();
   looks.planks.push(floorTex);
@@ -98,7 +102,15 @@ export function buildOffice(): Office {
     group,
     colliders,
     interactables,
-    wall: (wall, u, y, w, h) => void walls.push({ wall, u0: u - w / 2, u1: u + w / 2, y0: y - h / 2, y1: y + h / 2 }),
+    wall: (wall, u, y, w, h) => {
+      const rect: WallRect = { wall, u0: u - w / 2, u1: u + w / 2, y0: y - h / 2, y1: y + h / 2 };
+      walls.push(rect);
+      return (taken) => {
+        const i = walls.indexOf(rect);
+        if (taken && i < 0) walls.push(rect);
+        else if (!taken && i >= 0) walls.splice(i, 1);
+      };
+    },
     looks,
     planks,
     desks,
@@ -113,6 +125,7 @@ export function buildOffice(): Office {
   // Each fixture in turn, with what it hands back.
   const updates: ((t: number, dt: number) => void)[] = [];
   const levels: ((index: number, count: number, wings: readonly number[]) => void)[] = [];
+  const lookers: ((p: FloorPalette) => void)[] = [];
   const plan: readonly Fixture[] = floorPlan();
   for (const fixture of plan) {
     const built = fixture(site);
@@ -125,6 +138,7 @@ export function buildOffice(): Office {
     }
     if (built.update) updates.push(built.update);
     if (built.setLevel) levels.push(built.setLevel);
+    if (built.setLook) lookers.push(built.setLook);
   }
 
   const setLook = (p: FloorPalette) => {
@@ -134,6 +148,8 @@ export function buildOffice(): Office {
       paintPlanks(t.image as HTMLCanvasElement, p);
       t.needsUpdate = true;
     }
+    for (const f of looks.furniture) f.mat.color.set(p.furniture?.[f.role] ?? f.color);
+    for (const look of lookers) look(p);
   };
 
   const setLevel = (index: number, count: number, wings: readonly number[] = []) => {

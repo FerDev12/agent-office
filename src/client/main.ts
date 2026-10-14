@@ -42,6 +42,7 @@ import { installCoffee } from './features/coffee';
 import { installDictation } from './features/dictation';
 import { installDog } from './features/dog';
 import { installEmotes } from './features/emotes';
+import { installFloorTheme } from './features/floortheme';
 import { installGolf } from './features/golf';
 import { installGong } from './features/gong';
 import { installGallery, installHanging } from './features/hanging';
@@ -179,6 +180,7 @@ installChat(ctx);
 parts.talk = installVoice(ctx, { tv: parts.tv });
 installDictation(ctx);
 parts.hud = installHud(ctx, core, parts);
+installFloorTheme(ctx, { addAction: parts.hud.hud.addAction });
 
 // ---- Main loop ---------------------------------------------------------------------------------------
 fitWindow(ctx);

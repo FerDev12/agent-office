@@ -2,7 +2,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { FLOOR_PALETTES, MAX_FLOORS, normalizeRepo, sameRepo } from '../shared/floors.js';
+import { AUTO_PALETTES, MAX_FLOORS, isPalette, normalizeRepo, sameRepo } from '../shared/floors.js';
 import type { CloneProgress, ProjectsDirState, RepoChoice } from '../shared/protocol.js';
 import { CloneRun, dropLog, whyCloneFailed, type CloneEnd, type CloneRunOptions } from './clone.js';
 import { gh } from './github.js';
@@ -256,6 +256,16 @@ export class Building {
     return id === this.localId;
   }
 
+  /** Paints floor `id` in theme `palette` (an index into FLOOR_PALETTES), for good. Returns the floor, or why it can't. */
+  setPalette(id: string, palette: number): FloorDef | string {
+    if (!isPalette(palette)) return 'No such theme';
+    const def = this.defs.find((d) => d.id === id);
+    if (!def) return this.pendingFloor(id) ? "That floor is still being cloned — pick its theme once it's there" : 'No such floor';
+    def.palette = palette;
+    this.save();
+    return def;
+  }
+
   /**
    * Takes a floor off the building. Its checkout stays where it is, with its workers, queue and
    * pictures in its .agent-office folder: adding the repository again moves back in, as long as the
@@ -387,9 +397,10 @@ export class Building {
     let id = base;
     for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
     // The first look nobody has, so floors side by side never match; then round again.
+    // Only the themes handed out by themselves: one an admin picks (VTwo) is never a new floor's.
     const used = new Set([...this.defs, ...this.pending()].map((d) => d.palette));
-    const free = FLOOR_PALETTES.findIndex((_, i) => !used.has(i));
-    const palette = free >= 0 ? free : (this.defs.length + this.cloning.size) % FLOOR_PALETTES.length;
+    const free = AUTO_PALETTES.find((i) => !used.has(i));
+    const palette = free ?? AUTO_PALETTES[(this.defs.length + this.cloning.size) % AUTO_PALETTES.length];
     return { id, name, repo, dir, palette, addedBy: by, addedAt: Date.now() };
   }
 
@@ -406,7 +417,7 @@ export class Building {
           name: typeof s.name === 'string' && s.name ? s.name.slice(0, 100) : path.basename(s.dir),
           repo: normalizeRepo(s.repo),
           dir: s.dir,
-          palette: Number.isInteger(s.palette) && (s.palette as number) >= 0 ? (s.palette as number) : 0,
+          palette: isPalette(s.palette) ? s.palette : 0,
           addedBy: typeof s.addedBy === 'string' ? s.addedBy : '?',
           addedAt: typeof s.addedAt === 'number' ? s.addedAt : Date.now(),
         });

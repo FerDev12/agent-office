@@ -1,0 +1,12 @@
+/* 🎨 Floor theme: a card for each theme, the floor's own one picked. */
+.floor-theme .theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; margin: 12px 0; }
+.floor-theme .theme-card { display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 6px; font: inherit; font-weight: 800; font-size: 13px; color: var(--ink); background: #fff; border: 3px solid var(--ink); border-radius: 14px; cursor: pointer; box-shadow: 0 3px 0 var(--ink); }
+.floor-theme .theme-card:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
+.floor-theme .theme-card.on { border-color: var(--accent); box-shadow: 0 3px 0 var(--accent); }
+.floor-theme .theme-card.on .theme-name::after { content: ' ✓'; color: var(--accent); }
+.floor-theme .theme-swatch { position: relative; display: block; height: 58px; border-radius: 8px; overflow: hidden; border: 2px solid var(--ink); background: linear-gradient(var(--wall) 0 58%, var(--trim) 58% 64%, transparent 64%), repeating-linear-gradient(90deg, var(--floor) 0 18px, var(--alt) 18px 36px, var(--seam) 36px 38px); }
+.floor-theme .theme-swatch.concrete { background: linear-gradient(var(--wall) 0 58%, var(--trim) 58% 64%, transparent 64%), radial-gradient(circle at 30% 85%, var(--alt), var(--floor) 60%); }
+/* VTwo's V, lit from behind, on its wall. */
+.floor-theme .theme-mark { position: absolute; left: 50%; top: 3px; transform: translateX(-50%); font-weight: 900; font-size: 24px; line-height: 1; color: #1c1b20; text-shadow: 0 0 4px #fff, 0 0 8px #fff; }
+.floor-theme .theme-swatch.concrete:has(.theme-mark)::after { content: ''; position: absolute; right: 8px; top: 0; width: 10px; height: 58%; background: #4c1d95; box-shadow: 0 0 8px #8b5cf6; }
+.floor-theme .theme-name { text-align: center; }

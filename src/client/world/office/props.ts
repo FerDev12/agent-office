@@ -63,8 +63,7 @@ export const DESK_BOOKS = ['books_upright', 'books_leaning', 'books_stack'] as c
  * to +x. The body is the old code-built mug's size (0.06 round at the top, 0.12 tall). If the model didn't
  * load, an empty group.
  */
-export function deskMug(color: string): THREE.Object3D {
-  const body = toon(color);
+export function deskMug(color: string, body: THREE.Material = toon(color)): THREE.Object3D {
   return piece('desk_props', 'mug', (name) => (name === 'Mug' ? body : paintDeskProp(name)));
 }
 

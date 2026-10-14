@@ -54,6 +54,8 @@ export interface Hud {
   /** Redraws the top bar for a change the store doesn't announce (voice, hanging a picture). */
   refresh(): void;
   toggleMenu(): void;
+  /** Adds a feature's own action to the menu, after the ones it was made with; the Off takes it away. */
+  addAction(a: HudAction): () => void;
 }
 
 /**
@@ -281,5 +283,14 @@ export function mountHud(actions: HudAction[], settings: Settings, save: () => v
   for (const t of ['workers', 'peers', 'issues', 'pulls', 'services', 'queue', 'meeting', 'upgrade', 'me', 'floors', 'signins'] as Topic[]) store.on(t, render);
   applyPanels();
   render();
-  return { refresh: render, toggleMenu };
+  function addAction(a: HudAction) {
+    actions.push(a);
+    render();
+    return () => {
+      const i = actions.indexOf(a);
+      if (i >= 0) actions.splice(i, 1);
+      render();
+    };
+  }
+  return { refresh: render, toggleMenu, addAction };
 }

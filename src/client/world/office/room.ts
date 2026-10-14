@@ -33,7 +33,7 @@ export const rugs: Fixture = (site) => {
     [-10.5, 4],
     [-1.5, 4],
   ].forEach(([x, z], i) => {
-    const rug = mesh(roundedBox(6.2, 0.02, 4.6, 0.6), toon(PALETTE.rugs[i]), x, 0.011, z, false);
+    const rug = mesh(roundedBox(6.2, 0.02, 4.6, 0.6), site.looks.paint('rug', PALETTE.rugs[i]), x, 0.011, z, false);
     site.group.add(rug);
   });
   return {};

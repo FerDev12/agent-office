@@ -153,7 +153,7 @@ export function buildLoft(group: THREE.Group, colliders: Collider[], interactabl
   colliders.push({ minX: maxX - 1.15, maxX, minZ: cz - 1.2, maxZ: cz + 1.2, bottom: floorY, top: floorY + 0.55 });
   seatable(couch, 'loft-couch', 1.8, interactables);
 
-  const rug = mesh(roundedBox(4.6, 0.02, 3.2, 0.6), toon('#caffbf'), deskX - 0.3, floorY + 0.015, cz + 0.1, false);
+  const rug = mesh(roundedBox(4.6, 0.02, 3.2, 0.6), looks.paint('rug', '#caffbf'), deskX - 0.3, floorY + 0.015, cz + 0.1, false);
   group.add(rug);
 
   const scope = new THREE.Group();

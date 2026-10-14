@@ -4,13 +4,13 @@ import type { NightParts } from '../outside';
 import { mesh, roundedBox, textPlane, toon } from '../toon';
 import type { Collider, DeskView, Interactable } from '../types';
 import type { Fixture } from './fixture';
-import { PALETTE, box, glassPane } from './materials';
+import { PALETTE, box, glassPane, plainPaint, type Paint } from './materials';
 import { wallBoard } from './props';
 import { chair } from './seats';
 import type { Door } from './shell';
 
 /** A chair at the meeting table, with its laptop on the table in front of it. */
-function buildMeetingSeat(def: DeskDef, index: number): DeskView {
+function buildMeetingSeat(def: DeskDef, index: number, paint: Paint): DeskView {
   const group = new THREE.Group();
   group.position.set(def.x, 0, def.z);
   group.rotation.y = def.rotY;
@@ -23,7 +23,7 @@ function buildMeetingSeat(def: DeskDef, index: number): DeskView {
   seatAnchor.rotation.y = Math.PI;
   seatAnchor.scale.setScalar(0.82);
   group.add(seatAnchor);
-  const ch = chair(['#2b2d42', '#ef476f', '#118ab2', '#06d6a0', '#ffd166'][index % 5]);
+  const ch = chair(['#2b2d42', '#ef476f', '#118ab2', '#06d6a0', '#ffd166'][index % 5], paint);
   ch.position.set(0, 0, 0.85);
   group.add(ch);
   // A merge's dance party: up on its chair rather than the table, where the laptops are close together.
@@ -41,7 +41,7 @@ function buildMeetingSeat(def: DeskDef, index: number): DeskView {
  * sliding glass door facing the lounge, a long table with its chairs (MEETING_SEATS), a board on the
  * back wall for the meeting's output and a sign by the door for how it's going.
  */
-export function buildMeetingRoom(group: THREE.Group, colliders: Collider[], interactables: Interactable[], desks: Map<string, DeskView>, doors: Door[], night: NightParts): { board: THREE.Mesh; sign: THREE.Mesh } {
+export function buildMeetingRoom(group: THREE.Group, colliders: Collider[], interactables: Interactable[], desks: Map<string, DeskView>, doors: Door[], night: NightParts, paint: Paint = plainPaint): { board: THREE.Mesh; sign: THREE.Mesh } {
   const R = MEETING_ROOM;
   const H = R.height;
   const T = 0.1;
@@ -132,7 +132,7 @@ export function buildMeetingRoom(group: THREE.Group, colliders: Collider[], inte
   interactables.push(talk);
   table.userData.interact = talk;
   MEETING_SEATS.forEach((def, i) => {
-    const view = buildMeetingSeat(def, i);
+    const view = buildMeetingSeat(def, i, paint);
     group.add(view.group);
     desks.set(def.id, view);
     const at = deskSeat(def, 1.2);
@@ -184,7 +184,7 @@ declare module '../types' {
 
 /** Under the loft: the meeting room. */
 export const meetingRoom: Fixture<'meetingBoard' | 'meetingSign'> = (site) => {
-  const built = buildMeetingRoom(site.group, site.colliders, site.interactables, site.desks, site.doors, site.get('night'));
+  const built = buildMeetingRoom(site.group, site.colliders, site.interactables, site.desks, site.doors, site.get('night'), site.looks.paint);
   site.wall('south', MEETING_BOARD.x, MEETING_BOARD.y, MEETING_BOARD.width + 0.4, MEETING_BOARD.height + 0.4);
   return { handle: { meetingBoard: built.board, meetingSign: built.sign } };
 };
